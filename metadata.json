@@ -1,0 +1,5 @@
+{
+  "name": "imani System",
+  "description": "A production-ready, synchronized Shop Management System for imported goods with role-based access, M-Pesa parsing, and GenAI product assistance.",
+  "requestFramePermissions": []
+}
