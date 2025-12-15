@@ -4,7 +4,19 @@ export type UserRole = 'ADMIN' | 'ORDER_ENTRY';
 export interface User {
   id: string;
   name: string;
+  email: string;
   role: UserRole;
+  passwordHash?: string; // Optional only for legacy mock data, required in production
+  resetToken?: string;
+  resetTokenExpiry?: string; // ISO Date
+}
+
+export interface AuthLog {
+  id: string;
+  timestamp: string;
+  email: string;
+  action: 'LOGIN_SUCCESS' | 'LOGIN_FAILED' | 'PASSWORD_CHANGE' | 'RESET_REQUEST';
+  details?: string;
 }
 
 export interface DynamicAttribute {
@@ -77,13 +89,35 @@ export interface PaymentTransaction {
   rawMessage: string;
 }
 
+export interface ThemePalette {
+  name: string;
+  primary: string;   // Main button color, Sidebar selected
+  secondary: string; // Sidebar background
+  accent: string;    // Highlights
+  text: string;      // Sidebar text
+}
+
+export interface ShopSettings {
+  shopName: string;
+  phoneNumbers: string[]; // Changed to array
+  logoUrl: string;
+  fobPaybill: string;
+  fobAccountNumber: string; // Changed from Format to Number
+  freightPaybill: string;
+  freightAccountNumber: string; // Changed from Format to Number
+  theme: ThemePalette;
+}
+
 export interface AppState {
   currentUser: User | null;
+  users: User[];
+  authLogs: AuthLog[];
   catalogs: Catalog[];
   products: Product[];
   clients: Client[];
   orders: Order[];
   payments: PaymentTransaction[];
+  shopSettings: ShopSettings;
   
   // Navigation & UI State
   currentView: string;

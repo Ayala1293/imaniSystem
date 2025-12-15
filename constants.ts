@@ -1,9 +1,9 @@
 
-import { Product, Client, Order, User, PaymentTransaction, Catalog } from './types';
+import { Product, Client, Order, User, PaymentTransaction, Catalog, ShopSettings } from './types';
 
 export const MOCK_USERS: User[] = [
-  { id: 'u1', name: 'System Admin', role: 'ADMIN' },
-  { id: 'u2', name: 'Sales Staff', role: 'ORDER_ENTRY' },
+  { id: 'u1', name: 'System Admin', email: 'admin@shop.com', role: 'ADMIN' },
+  { id: 'u2', name: 'Sales Staff', email: 'sales@shop.com', role: 'ORDER_ENTRY' },
 ];
 
 export const INITIAL_CATALOGS: Catalog[] = [
@@ -15,6 +15,23 @@ export const INITIAL_CATALOGS: Catalog[] = [
     createdAt: new Date().toISOString()
   }
 ];
+
+export const INITIAL_SHOP_SETTINGS: ShopSettings = {
+  shopName: "Imani Homes & Imports",
+  phoneNumbers: ["+254 700 000 000"],
+  logoUrl: "",
+  fobPaybill: "247247",
+  fobAccountNumber: "0100000000",
+  freightPaybill: "247247",
+  freightAccountNumber: "0200000000",
+  theme: {
+    name: "Imani Gold",
+    primary: "#C49A46", // The Gold from the logo
+    secondary: "#111111", // Black from the logo
+    accent: "#DAA520", // Lighter Gold for highlights
+    text: "#F3F4F6" // Light text for sidebar
+  }
+};
 
 export const INITIAL_PRODUCTS: Product[] = [
   {

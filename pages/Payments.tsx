@@ -9,109 +9,63 @@ const Payments = () => {
 
   const activeCatalog = catalogs.find(c => c.id === activeCatalogId);
 
-  // --- Filter Logic ---
-  // Get all client IDs who have an order containing items from the active catalog
   const relevantClientIds = new Set<string>();
   if (activeCatalogId) {
       orders.forEach(order => {
-          const hasItemInCatalog = order.items.some(item => {
-              const prod = products.find(p => p.id === item.productId);
-              return prod?.catalogId === activeCatalogId;
-          });
-          if (hasItemInCatalog) {
+          if (order.items.some(item => products.find(p => p.id === item.productId)?.catalogId === activeCatalogId)) {
               relevantClientIds.add(order.clientId);
           }
       });
   }
 
-  // Filter payments from those clients
-  const filteredPayments = activeCatalogId 
-    ? payments.filter(p => p.clientId && relevantClientIds.has(p.clientId))
-    : [];
+  const filteredPayments = activeCatalogId ? payments.filter(p => p.clientId && relevantClientIds.has(p.clientId)) : [];
 
   if (!activeCatalogId) {
       return (
           <div className="space-y-6">
-              <div>
-                  <h2 className="text-3xl font-bold text-gray-800">Payment History</h2>
-                  <p className="text-gray-500">Select a catalog month to view payments from clients associated with that shipment.</p>
-              </div>
+              <div><h2 className="text-3xl font-bold text-gray-800">Payments</h2><p className="text-gray-500">Select catalog.</p></div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">{catalogs.map(c => {
+                   // Calculate approximate payments for this catalog (based on orders in it)
+                   // Note: This is an estimation for display since payments aren't directly linked to catalogs, but to orders/clients
+                   let estTotal = 0;
+                   const catOrders = orders.filter(o => o.items.some(i => products.find(p => p.id === i.productId)?.catalogId === c.id));
+                   const catClients = new Set(catOrders.map(o => o.clientId));
+                   // Filter payments from clients active in this catalog
+                   const catPayments = payments.filter(p => p.clientId && catClients.has(p.clientId));
+                   estTotal = catPayments.reduce((acc, p) => acc + p.amount, 0);
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {catalogs.map(catalog => (
-                      <div 
-                          key={catalog.id} 
-                          onClick={() => setActiveCatalogId(catalog.id)}
-                          className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
-                      >
-                          <div className="flex justify-between items-start mb-4">
-                              <div className="p-3 bg-green-50 text-green-600 rounded-lg group-hover:bg-green-100 transition-colors">
-                                  <CreditCard size={24} />
-                              </div>
-                              <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded">
-                                  {new Date(catalog.closingDate).toLocaleDateString()}
-                              </span>
-                          </div>
-                          <h3 className="text-xl font-bold text-gray-800 mb-1">{catalog.name}</h3>
-                          <div className="flex items-center text-sm text-gray-500 mb-4">
-                              <Calendar size={14} className="mr-2" />
-                              <span>Deadline: {new Date(catalog.closingDate).toLocaleDateString()}</span>
-                          </div>
-                          <div className="text-xs text-gray-400">
-                             Click to view logs
-                          </div>
+                   return (
+                  <div key={c.id} onClick={() => setActiveCatalogId(c.id)} className="bg-white p-6 rounded-xl border border-gray-100 hover:shadow-md transition-all cursor-pointer group hover-glow relative overflow-hidden">
+                      <div className="flex mb-4"><div className="p-3 theme-bg-light theme-text rounded-lg"><CreditCard size={24} /></div></div>
+                      <h3 className="text-xl font-bold text-gray-800">{c.name}</h3>
+                      
+                      <div className="grid grid-cols-2 gap-4 mt-6 pt-4 border-t border-gray-100">
+                          <div><p className="text-xs text-gray-400 font-medium uppercase">Transactions</p><p className="text-lg font-bold text-gray-800">{catPayments.length}</p></div>
+                          <div><p className="text-xs text-gray-400 font-medium uppercase">Total Value</p><p className="text-lg font-bold text-green-600">~Ksh {estTotal.toLocaleString()}</p></div>
                       </div>
-                  ))}
-              </div>
+                  </div>
+              )})}</div>
           </div>
       );
   }
 
   return (
     <div className="space-y-6">
-        <div className="flex items-center gap-4 mb-2">
-            <button 
-                onClick={() => setActiveCatalogId(null)}
-                className="p-2 hover:bg-gray-200 rounded-full transition-colors"
-            >
-                <ArrowLeft size={20} className="text-gray-600"/>
-            </button>
-            <div>
-                <h2 className="text-3xl font-bold text-gray-800">{activeCatalog?.name} Payments</h2>
-                <p className="text-sm text-gray-500">Transaction logs for clients in this cycle.</p>
-            </div>
-        </div>
-
-        {/* History Section */}
+        <div className="flex items-center gap-4 mb-2"><button onClick={() => setActiveCatalogId(null)} className="p-2 hover:bg-gray-200 rounded-full"><ArrowLeft size={20} className="text-gray-600"/></button><h2 className="text-3xl font-bold text-gray-800">{activeCatalog?.name} Payments</h2></div>
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-gray-100 bg-gray-50">
-                <h3 className="font-bold text-gray-700">Transaction Logs</h3>
-            </div>
+            <div className="p-4 border-b border-gray-100 bg-gray-50"><h3 className="font-bold text-gray-700">Logs</h3></div>
             <div className="overflow-x-auto">
                 <table className="w-full">
-                    <thead className="bg-white">
-                        <tr className="text-left text-xs font-semibold text-gray-500 uppercase border-b border-gray-100">
-                            <th className="px-6 py-4">Date</th>
-                            <th className="px-6 py-4">Payer Name</th>
-                            <th className="px-6 py-4">Code</th>
-                            <th className="px-6 py-4">Reference Message</th>
-                            <th className="px-6 py-4 text-right">Amount</th>
-                        </tr>
-                    </thead>
+                    <thead className="bg-white"><tr className="text-left text-xs font-semibold text-gray-500 uppercase border-b"><th className="px-6 py-4">Date</th><th className="px-6 py-4">Payer</th><th className="px-6 py-4">Code</th><th className="px-6 py-4 text-right">Amount</th></tr></thead>
                     <tbody className="divide-y divide-gray-50">
-                        {filteredPayments.length === 0 ? (
-                            <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-400">No relevant payments found for clients in this catalog.</td></tr>
-                        ) : (
-                            filteredPayments.slice().reverse().map(p => (
-                                <tr key={p.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 text-sm text-gray-600">{new Date(p.date).toLocaleDateString()} {new Date(p.date).toLocaleTimeString()}</td>
-                                    <td className="px-6 py-4 text-sm font-medium text-gray-800">{p.payerName}</td>
-                                    <td className="px-6 py-4 text-sm font-mono text-blue-600 bg-blue-50 w-fit rounded">{p.transactionCode}</td>
-                                    <td className="px-6 py-4 text-xs text-gray-500 max-w-xs truncate" title={p.rawMessage}>{p.rawMessage}</td>
-                                    <td className="px-6 py-4 text-sm font-bold text-green-600 text-right">+Ksh {p.amount.toLocaleString()}</td>
-                                </tr>
-                            ))
-                        )}
+                        {filteredPayments.slice().reverse().map(p => (
+                            <tr key={p.id} className="hover:bg-gray-50">
+                                <td className="px-6 py-4 text-sm text-gray-600">{new Date(p.date).toLocaleDateString()}</td>
+                                <td className="px-6 py-4 text-sm font-medium text-gray-800">{p.payerName}</td>
+                                <td className="px-6 py-4 text-sm font-mono text-gray-700 bg-gray-100 w-fit rounded px-2">{p.transactionCode}</td>
+                                <td className="px-6 py-4 text-sm font-bold text-green-600 text-right">+Ksh {p.amount.toLocaleString()}</td>
+                            </tr>
+                        ))}
                     </tbody>
                 </table>
             </div>

@@ -1,6 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
-import { Product, Order, Client } from "../types";
+import { Product, Order, Client, ShopSettings, ThemePalette } from "../types";
 
 // This is a client-side call for demo purposes. 
 // In production, proxy this through your backend to protect the API key.
@@ -39,27 +39,7 @@ export const generateProductDescription = async (name: string, attributes: strin
   }
 };
 
-export const analyzeSalesTrends = async (ordersData: string): Promise<string> => {
-    if (!ai) return "AI not configured.";
-
-    try {
-        const model = "gemini-2.5-flash";
-        const prompt = `
-            Analyze this summarized sales data and give 3 bullet points on performance and advice for next month's imports.
-            Data: ${ordersData}
-        `;
-        
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: prompt,
-        });
-        return response.text || "No analysis generated.";
-    } catch (e) {
-        return "Analysis unavailable.";
-    }
-}
-
-export const generateInvoiceMessage = async (order: Order, client: Client, products: Product[], type: 'FOB' | 'FREIGHT', deadlineDateStr: string): Promise<string> => {
+export const generateInvoiceMessage = async (order: Order, client: Client, products: Product[], type: 'FOB' | 'FREIGHT', deadlineDateStr: string, settings: ShopSettings): Promise<string> => {
   if (!ai) return "AI not configured. Please set API Key.";
 
   const itemsList = order.items.map((item, index) => {
@@ -77,13 +57,22 @@ export const generateInvoiceMessage = async (order: Order, client: Client, produ
   }).filter(Boolean).join('\n');
 
   const total = order.items.reduce((sum, item) => sum + (type === 'FOB' ? item.fobTotal : item.freightTotal), 0);
-  const accountNo = client.phone.replace('+', ''); // Use phone as account no
   
   // Parse the ISO deadline string to a friendly format
   const deadlineFriendly = new Date(deadlineDateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }); // e.g., 9th of August
 
+  // Determine Payment Details based on Type and Settings
+  const paybill = type === 'FOB' ? settings.fobPaybill : settings.freightPaybill;
+  const accNum = type === 'FOB' ? settings.fobAccountNumber : settings.freightAccountNumber;
+  
+  // Dynamic replacement for placeholders if user typed them, otherwise use explicit value
+  let finalAccNum = accNum;
+  if (finalAccNum.toLowerCase().includes('client')) finalAccNum = client.name;
+  if (finalAccNum.toLowerCase().includes('order')) finalAccNum = order.id.slice(-6).toUpperCase();
+  if (finalAccNum.toLowerCase().includes('phone')) finalAccNum = client.phone.replace('+', '');
+
   const prompt = `
-    You are a shop assistant creating a WhatsApp invoice message.
+    You are a shop assistant creating a WhatsApp invoice message for ${settings.shopName}.
     
     Generate a message EXACTLY following this format (do not add intro text outside the message):
 
@@ -94,8 +83,8 @@ export const generateInvoiceMessage = async (order: Order, client: Client, produ
     Total Ksh.${total}
 
     *Payment details*
-    Paybill No.542542
-    Account.No.${accountNo}
+    Paybill No.${paybill}
+    Account No: ${finalAccNum}
 
     Payment deadline is on the ${deadlineFriendly}. Thankyou 😊
 
