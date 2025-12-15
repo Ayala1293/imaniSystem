@@ -10,12 +10,13 @@ import {
   Container,
   ClipboardCheck,
   Settings,
-  LayoutDashboard
+  LayoutDashboard,
+  WifiOff
 } from 'lucide-react';
 import { useAppStore } from '../store';
 
 const Sidebar = () => {
-  const { currentUser, logout, currentView, setCurrentView, shopSettings } = useAppStore();
+  const { currentUser, logout, currentView, setCurrentView, shopSettings, isOffline } = useAppStore();
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -41,7 +42,10 @@ const Sidebar = () => {
         <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#fff' }}>
             {shopSettings.shopName}
         </h1>
-        <p className="text-xs opacity-70 mt-1">v3.0.0 • {currentUser?.role}</p>
+        <div className="flex items-center justify-between mt-1">
+             <p className="text-xs opacity-70">v3.0.0 • {currentUser?.role}</p>
+             {isOffline && <span className="flex items-center text-[10px] bg-red-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse"><WifiOff size={10} className="mr-1"/> OFFLINE</span>}
+        </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-4">

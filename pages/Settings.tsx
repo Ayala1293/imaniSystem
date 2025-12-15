@@ -1,7 +1,8 @@
 
 import React, { useState, useRef } from 'react';
 import { useAppStore } from '../store';
-import { Save, Upload, Smartphone, CreditCard, Plus, Trash2, Download, Database, CheckCircle, AlertTriangle, ShieldAlert, Clock, User } from 'lucide-react';
+import { Save, Upload, Smartphone, CreditCard, Plus, Trash2, Download, Database, CheckCircle, AlertTriangle, ShieldAlert, Clock, User, Zap } from 'lucide-react';
+import { INITIAL_CATALOGS, INITIAL_PRODUCTS, INITIAL_CLIENTS, INITIAL_ORDERS, INITIAL_PAYMENTS, INITIAL_SHOP_SETTINGS } from '../constants';
 
 const Settings = () => {
   const { 
@@ -14,7 +15,8 @@ const Settings = () => {
     payments,
     importData,
     authLogs,
-    currentUser
+    currentUser,
+    isOffline
   } = useAppStore();
   
   const [formData, setFormData] = useState(shopSettings);
@@ -89,6 +91,23 @@ const Settings = () => {
       if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleLoadDemoData = async () => {
+      if (!window.confirm("WARNING: This will ERASE all current data and replace it with sample data. Continue?")) return;
+      
+      const demoData = {
+          catalogs: INITIAL_CATALOGS,
+          products: INITIAL_PRODUCTS,
+          clients: INITIAL_CLIENTS,
+          orders: INITIAL_ORDERS,
+          payments: INITIAL_PAYMENTS,
+          shopSettings: INITIAL_SHOP_SETTINGS
+      };
+      
+      const success = await importData(demoData);
+      if (success) alert("Demo data loaded successfully! Your database is now populated.");
+      else alert("Failed to load demo data.");
+  };
+
   return (
     <div className="space-y-8 pb-10">
       <div><h2 className="text-3xl font-bold text-gray-800">Shop Configuration</h2><p className="text-gray-500">Manage details and data backups.</p></div>
@@ -108,7 +127,7 @@ const Settings = () => {
               </div>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <button onClick={handleBackup} className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 border-dashed rounded-xl hover:bg-gray-50 hover:border-blue-300 hover:shadow-md transition-all group">
                   <Download size={32} className="mb-3 text-gray-400 group-hover:text-blue-500"/>
                   <span className="font-bold text-gray-700 group-hover:text-blue-700">Download Backup File</span>
@@ -123,6 +142,14 @@ const Settings = () => {
                       {importStatus === 'ERROR' && <div className="animate-fade-in text-center"><AlertTriangle size={40} className="text-red-500 mx-auto mb-2"/><span className="font-bold text-red-600">Invalid File</span></div>}
                   </button>
               </div>
+
+              {!isOffline && currentUser?.role === 'ADMIN' && (
+                   <button onClick={handleLoadDemoData} className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 border-dashed rounded-xl hover:bg-orange-50 hover:border-orange-300 hover:shadow-md transition-all group">
+                        <Zap size={32} className="mb-3 text-gray-400 group-hover:text-orange-500"/>
+                        <span className="font-bold text-gray-700 group-hover:text-orange-700">Load Demo Data</span>
+                        <span className="text-xs text-gray-400 mt-1">Populate empty DB with samples</span>
+                   </button>
+              )}
           </div>
       </div>
 
