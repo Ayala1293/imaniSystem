@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../store';
 import { Product, Catalog } from '../types';
-import { Plus, Search, Sparkles, Trash2, Edit, Upload, FolderOpen, Calendar, ArrowLeft, History, Archive, Settings } from 'lucide-react';
+import { Plus, Search, Sparkles, Trash2, Edit, Upload, FolderOpen, Calendar, ArrowLeft, History, Archive, Settings, Lock, CheckCircle, Info, Edit2, ListPlus } from 'lucide-react';
 import { generateProductDescription } from '../services/geminiService';
 
 const Products = () => {
@@ -40,8 +40,11 @@ const Products = () => {
     description: '',
     attributes: []
   });
+  
+  // Attribute Builder States
   const [newAttrKey, setNewAttrKey] = useState('');
-  const [newAttrValue, setNewAttrValue] = useState('');
+  const [newAttrValue, setNewAttrValue] = useState(''); // The main string "Red, Blue"
+  const [singleOptionInput, setSingleOptionInput] = useState(''); // Helper input for single option
 
   const [catalogFormData, setCatalogFormData] = useState<Partial<Catalog>>({
     name: '',
@@ -75,15 +78,27 @@ const Products = () => {
   };
 
   // --- Attribute Logic ---
+  
   const addAttribute = () => {
-      if(newAttrKey) {
+      if(newAttrKey && newAttrValue) {
           setProductFormData(prev => ({
               ...prev,
               attributes: [...(prev.attributes || []), { key: newAttrKey, value: newAttrValue }]
           }));
           setNewAttrKey('');
           setNewAttrValue('');
+          setSingleOptionInput('');
       }
+  };
+
+  const editAttribute = (index: number) => {
+      const attr = productFormData.attributes![index];
+      setNewAttrKey(attr.key);
+      setNewAttrValue(attr.value);
+      // Remove it from the list so we can re-add it updated
+      const newAttrs = [...(productFormData.attributes || [])];
+      newAttrs.splice(index, 1);
+      setProductFormData({ ...productFormData, attributes: newAttrs });
   };
 
   const removeAttribute = (index: number) => {
@@ -91,6 +106,23 @@ const Products = () => {
           ...prev,
           attributes: prev.attributes?.filter((_, i) => i !== index)
       }));
+  };
+
+  const appendSingleOption = () => {
+      if (!singleOptionInput.trim()) return;
+      
+      let current = newAttrValue.trim();
+      // Remove trailing comma if exists
+      if (current.endsWith(',')) current = current.slice(0, -1);
+      
+      const toAdd = singleOptionInput.trim();
+      
+      if (current.length > 0) {
+          setNewAttrValue(`${current}, ${toAdd}`);
+      } else {
+          setNewAttrValue(toAdd);
+      }
+      setSingleOptionInput('');
   };
 
   // --- Catalog Logic ---
@@ -132,6 +164,40 @@ const Products = () => {
     setIsCatalogModalOpen(false);
   };
 
+  const handleFinalizeCatalog = () => {
+      if (!activeCatalog) {
+          alert("Error: Active catalog not found.");
+          return;
+      }
+      
+      const confirmMsg = `Are you sure you want to finalize the catalog "${activeCatalog.name}"?\n\nThis will:\n1. Lock all prices.\n2. Prevent new products.\n3. Lock existing running orders.`;
+      
+      if (window.confirm(confirmMsg)) {
+          // 1. Update Catalog Status
+          const updatedCatalog: Catalog = {
+              ...activeCatalog,
+              status: 'CLOSED'
+          };
+          updateCatalog(updatedCatalog);
+
+          // 2. Lock associated orders
+          const associatedOrders = orders.filter(o => o.items.some(i => {
+              const p = products.find(prod => prod.id === i.productId);
+              return p?.catalogId === activeCatalog.id;
+          }));
+
+          let lockedCount = 0;
+          associatedOrders.forEach(order => {
+              if(!order.isLocked) {
+                  updateOrder({...order, isLocked: true});
+                  lockedCount++;
+              }
+          });
+
+          alert(`Catalog finalized successfully! ${lockedCount} orders have been locked.`);
+      }
+  };
+
   // --- Product Logic ---
 
   const openProductModal = (product?: Product) => {
@@ -144,6 +210,7 @@ const Products = () => {
       }
       setNewAttrKey('');
       setNewAttrValue('');
+      setSingleOptionInput('');
       setIsProductModalOpen(true);
   };
 
@@ -190,7 +257,8 @@ const Products = () => {
             ...productFormData as Product,
             id: Date.now().toString(),
             catalogId: activeCatalogId,
-            imageUrl: finalImage
+            imageUrl: finalImage,
+            stockCounts: {} // Init stock
         };
         addProduct(newProduct);
     }
@@ -203,7 +271,8 @@ const Products = () => {
       const newProduct: Product = {
           ...historicalProduct,
           id: `imp-${Date.now()}`,
-          catalogId: activeCatalogId
+          catalogId: activeCatalogId,
+          stockCounts: {} // Reset stock for new catalog
       };
       
       addProduct(newProduct);
@@ -269,7 +338,7 @@ const Products = () => {
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Catalog Name</label>
                                 <input 
-                                    className="w-full p-2 border border-gray-300 rounded text-gray-800" 
+                                    className="w-full p-2 border border-gray-300 rounded text-gray-800 bg-white" 
                                     placeholder="e.g. September Imports"
                                     value={catalogFormData.name}
                                     onChange={e => setCatalogFormData({...catalogFormData, name: e.target.value})}
@@ -279,7 +348,7 @@ const Products = () => {
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Closing Date (Invoice Deadline)</label>
                                 <input 
                                     type="date"
-                                    className="w-full p-2 border border-gray-300 rounded text-gray-800" 
+                                    className="w-full p-2 border border-gray-300 rounded text-gray-800 bg-white" 
                                     value={catalogFormData.closingDate ? new Date(catalogFormData.closingDate).toISOString().split('T')[0] : ''}
                                     onChange={e => setCatalogFormData({...catalogFormData, closingDate: e.target.value})}
                                 />
@@ -299,6 +368,7 @@ const Products = () => {
   // View 2: Inside a Catalog
   const currentCatalogProducts = products.filter(p => p.catalogId === activeCatalogId);
   const currentProductNames = new Set(currentCatalogProducts.map(p => p.name.toLowerCase().trim()));
+  const isCatalogClosed = activeCatalog?.status === 'CLOSED';
 
   const filteredProducts = currentCatalogProducts.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -326,12 +396,19 @@ const Products = () => {
           <div>
             <div className="flex items-center gap-2">
                 <h2 className="text-3xl font-bold text-gray-800">{activeCatalog?.name}</h2>
-                <button 
-                    onClick={() => openCatalogModal(activeCatalog)}
-                    className="text-gray-400 hover:text-blue-600"
-                >
-                    <Edit size={16} />
-                </button>
+                {activeCatalog?.status === 'OPEN' && (
+                    <button 
+                        onClick={() => openCatalogModal(activeCatalog)}
+                        className="text-gray-400 hover:text-blue-600"
+                    >
+                        <Edit size={16} />
+                    </button>
+                )}
+                {activeCatalog?.status === 'CLOSED' && (
+                    <span className="px-2 py-0.5 bg-red-100 text-red-600 text-xs font-bold rounded flex items-center">
+                        <Lock size={10} className="mr-1"/> CLOSED
+                    </span>
+                )}
             </div>
             <p className="text-sm text-gray-500">
                 Closing Date: <span className="font-bold">{new Date(activeCatalog?.closingDate || '').toLocaleDateString()}</span> (Used in Invoices)
@@ -345,13 +422,13 @@ const Products = () => {
             <input 
             type="text" 
             placeholder="Search products..." 
-            className="flex-1 outline-none text-sm text-black bg-white"
+            className="flex-1 outline-none text-sm text-gray-900 bg-white"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             />
         </div>
         
-        {currentUser?.role === 'ADMIN' && (
+        {currentUser?.role === 'ADMIN' && !isCatalogClosed && (
           <div className="flex gap-2">
               <button 
                 onClick={() => setIsImportModalOpen(true)}
@@ -375,7 +452,7 @@ const Products = () => {
         {filteredProducts.map(product => (
           <div key={product.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group relative">
             
-            {currentUser?.role === 'ADMIN' && (
+            {currentUser?.role === 'ADMIN' && !isCatalogClosed && (
                 <div className="absolute top-2 right-2 flex gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => openProductModal(product)} className="p-2 bg-white/90 rounded-full shadow hover:text-blue-600"><Edit size={14}/></button>
                     <button onClick={() => handleDeleteProduct(product.id)} className="p-2 bg-white/90 rounded-full shadow hover:text-red-600"><Trash2 size={14}/></button>
@@ -400,6 +477,39 @@ const Products = () => {
         ))}
       </div>
 
+      {/* Catalog Finalization Section */}
+      {currentUser?.role === 'ADMIN' && (
+          <div className="mt-12 p-8 border-t border-gray-200">
+              <div className="max-w-3xl mx-auto text-center">
+                  {isCatalogClosed ? (
+                      <div className="p-6 bg-gray-100 rounded-xl border border-gray-200">
+                          <CheckCircle className="mx-auto text-green-500 mb-2" size={48} />
+                          <h3 className="text-xl font-bold text-gray-800">Catalog Finalized</h3>
+                          <p className="text-gray-500 mt-2">
+                              This month's catalog is closed. Product prices are locked and no new products can be added. 
+                              Orders associated with these products are now restricted from modification.
+                          </p>
+                      </div>
+                  ) : (
+                      <div className="p-6 bg-blue-50 rounded-xl border border-blue-100">
+                          <Lock className="mx-auto text-blue-500 mb-2" size={48} />
+                          <h3 className="text-xl font-bold text-blue-900">Finalize Monthly Catalog</h3>
+                          <p className="text-blue-700 mt-2 mb-6">
+                              Once you have finished adding all products for this month, finalize the catalog. 
+                              This will lock prices and close the product list to prevent changes during the ordering phase.
+                          </p>
+                          <button 
+                              onClick={handleFinalizeCatalog}
+                              className="px-8 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 shadow-md transition-all"
+                          >
+                              Finalize & Close Catalog
+                          </button>
+                      </div>
+                  )}
+              </div>
+          </div>
+      )}
+
       {/* Product Modal */}
       {isProductModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
@@ -414,7 +524,7 @@ const Products = () => {
                     <div>
                         <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Name</label>
                         <input 
-                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm text-gray-800" 
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm text-gray-800 bg-white" 
                             value={productFormData.name}
                             onChange={e => setProductFormData({...productFormData, name: e.target.value})}
                         />
@@ -422,7 +532,7 @@ const Products = () => {
                     <div>
                         <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Category</label>
                         <input 
-                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm text-gray-800" 
+                            className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm text-gray-800 bg-white" 
                             value={productFormData.category}
                             onChange={e => setProductFormData({...productFormData, category: e.target.value})}
                         />
@@ -434,38 +544,75 @@ const Products = () => {
                     <label className="block text-xs font-bold text-gray-500 mb-2 uppercase flex items-center">
                         <Settings size={12} className="mr-1"/> Dynamic Variables
                     </label>
-                    <div className="space-y-2 mb-2">
+                    
+                    {/* Instructions for Range/List */}
+                    <div className="mb-3 p-2 bg-blue-50 text-blue-700 text-xs rounded border border-blue-100 flex items-start">
+                        <Info size={14} className="mr-1 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <strong>Tip for Order Dropdowns:</strong><br/>
+                            • <strong>List:</strong> Create a list (e.g. Red, Blue) to give clients options.<br/>
+                            • <strong>Range:</strong> Enter "34-46" to create a number range.
+                        </div>
+                    </div>
+
+                    <div className="space-y-2 mb-3">
                         {productFormData.attributes?.map((attr, idx) => (
-                            <div key={idx} className="flex gap-2 items-center bg-white p-2 rounded border border-gray-100 shadow-sm">
+                            <div key={idx} className="flex gap-2 items-center bg-white p-2 rounded border border-gray-100 shadow-sm group">
                                 <span className="text-xs font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded">{attr.key}</span>
-                                <span className="text-xs text-gray-600 flex-1">{attr.value}</span>
-                                <button onClick={() => removeAttribute(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
+                                <span className="text-xs text-gray-600 flex-1 truncate">{attr.value}</span>
+                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => editAttribute(idx)} className="text-blue-400 hover:text-blue-600 p-1"><Edit2 size={12}/></button>
+                                    <button onClick={() => removeAttribute(idx)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={12}/></button>
+                                </div>
                             </div>
                         ))}
                     </div>
-                    <div className="flex gap-2">
-                        <input 
-                            placeholder="Variable (e.g. Size)" 
-                            className="w-1/3 p-2 text-xs border border-gray-300 rounded outline-none text-gray-800 bg-white"
-                            value={newAttrKey}
-                            onChange={(e) => setNewAttrKey(e.target.value)}
-                        />
-                        <input 
-                            placeholder="Default Value (e.g. S, M, L)" 
-                            className="flex-1 p-2 text-xs border border-gray-300 rounded outline-none text-gray-800 bg-white"
-                            value={newAttrValue}
-                            onChange={(e) => setNewAttrValue(e.target.value)}
-                        />
+
+                    {/* Add/Edit Attribute Area */}
+                    <div className="bg-white p-3 rounded border border-gray-200">
+                        <div className="flex gap-2 mb-2">
+                            <input 
+                                placeholder="Variable Name (e.g. Color)" 
+                                className="w-1/3 p-2 text-xs border border-gray-300 rounded outline-none text-gray-800 bg-white font-bold"
+                                value={newAttrKey}
+                                onChange={(e) => setNewAttrKey(e.target.value)}
+                            />
+                            <input 
+                                placeholder="Values (e.g. Red, Blue)" 
+                                className="flex-1 p-2 text-xs border border-gray-300 rounded outline-none text-gray-800 bg-white"
+                                value={newAttrValue}
+                                onChange={(e) => setNewAttrValue(e.target.value)}
+                            />
+                        </div>
+                        {/* Quick Option Adder */}
+                        <div className="flex gap-2 items-center">
+                            <ListPlus size={14} className="text-gray-400"/>
+                            <input 
+                                placeholder="Add option to list (e.g. Green)"
+                                className="flex-1 p-1.5 text-xs border border-gray-200 rounded outline-none bg-gray-50 text-gray-900 focus:bg-white transition-colors"
+                                value={singleOptionInput}
+                                onChange={(e) => setSingleOptionInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && appendSingleOption()}
+                            />
+                            <button 
+                                type="button" 
+                                onClick={appendSingleOption}
+                                disabled={!singleOptionInput}
+                                className="text-xs text-blue-600 font-bold hover:text-blue-800 disabled:text-gray-300"
+                            >
+                                Add Option
+                            </button>
+                        </div>
+                        
                         <button 
                             type="button"
                             onClick={addAttribute}
-                            className="p-2 bg-slate-800 text-white rounded hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={!newAttrKey}
+                            className="w-full mt-3 p-2 bg-slate-800 text-white rounded hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center text-xs font-bold"
+                            disabled={!newAttrKey || !newAttrValue}
                         >
-                            <Plus size={14}/>
+                            <Plus size={12} className="mr-1"/> Save Variable
                         </button>
                     </div>
-                    <p className="text-[10px] text-gray-400 mt-1 ml-1">Add variables like Size, Volume, or Color options.</p>
                 </div>
 
                 {/* Image Picker */}
@@ -504,7 +651,7 @@ const Products = () => {
                         </button>
                     </div>
                     <textarea 
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none h-20 text-sm text-gray-800"
+                        className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none h-20 text-sm text-gray-800 bg-white"
                         value={productFormData.description}
                         onChange={e => setProductFormData({...productFormData, description: e.target.value})}
                     />
@@ -514,7 +661,7 @@ const Products = () => {
                     <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">FOB Price (Ksh)</label>
                     <input 
                         type="number"
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm text-gray-800" 
+                        className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm text-gray-800 bg-white" 
                         value={productFormData.fobPrice}
                         onChange={e => setProductFormData({...productFormData, fobPrice: parseFloat(e.target.value)})}
                     />
@@ -599,7 +746,7 @@ const Products = () => {
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Catalog Name</label>
                         <input 
-                            className="w-full p-2 border border-gray-300 rounded text-gray-800" 
+                            className="w-full p-2 border border-gray-300 rounded text-gray-800 bg-white" 
                             value={catalogFormData.name}
                             onChange={e => setCatalogFormData({...catalogFormData, name: e.target.value})}
                         />
@@ -608,7 +755,7 @@ const Products = () => {
                         <label className="block text-sm font-medium text-gray-700 mb-1">Closing Date (Invoice Deadline)</label>
                         <input 
                             type="date"
-                            className="w-full p-2 border border-gray-300 rounded text-gray-800" 
+                            className="w-full p-2 border border-gray-300 rounded text-gray-800 bg-white" 
                             value={catalogFormData.closingDate ? new Date(catalogFormData.closingDate).toISOString().split('T')[0] : ''}
                             onChange={e => setCatalogFormData({...catalogFormData, closingDate: e.target.value})}
                         />

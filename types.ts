@@ -30,6 +30,9 @@ export interface Product {
   fobPrice: number;
   freightCharge: number;
   category: string;
+  stockStatus?: 'PENDING' | 'ARRIVED'; // General status
+  stockCounts?: Record<string, number>; // Granular stock: { "Color:Red": 45, "Color:Blue": 10 }
+  stockSold?: Record<string, number>; // Tracks extras that have been sold/removed
 }
 
 export interface Client {
@@ -81,4 +84,10 @@ export interface AppState {
   clients: Client[];
   orders: Order[];
   payments: PaymentTransaction[];
+  
+  // Navigation & UI State
+  currentView: string;
+  setCurrentView: (view: string) => void;
+  pendingOrderClientId: string | null;
+  setPendingOrderClientId: (id: string | null) => void;
 }

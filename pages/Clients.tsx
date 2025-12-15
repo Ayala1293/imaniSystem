@@ -1,28 +1,54 @@
 
 import React, { useState, useRef } from 'react';
 import { useAppStore } from '../store';
-import { Search, UserPlus, Phone, FileSpreadsheet, UploadCloud } from 'lucide-react';
+import { Search, UserPlus, Phone, FileSpreadsheet, UploadCloud, Edit, ShoppingCart, X } from 'lucide-react';
 import { Client } from '../types';
 import * as XLSX from 'xlsx';
 
 const Clients = () => {
-  const { clients, addClient, currentUser } = useAppStore();
+  const { clients, addClient, updateClient, currentUser, setCurrentView, setPendingOrderClientId } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newClient, setNewClient] = useState<Partial<Client>>({ name: '', phone: '' });
+  
+  // Client Form State (Add/Edit)
+  const [clientFormData, setClientFormData] = useState<Partial<Client>>({ name: '', phone: '' });
+  const [isEditing, setIsEditing] = useState(false);
+  
+  // Action Modal State
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleAddClient = () => {
-    if (newClient.name && newClient.phone) {
-        addClient({
-            id: Date.now().toString(),
-            name: newClient.name,
-            phone: newClient.phone,
-            email: '' 
-        });
-        setNewClient({ name: '', phone: '' });
+  const handleSaveClient = () => {
+    if (clientFormData.name && clientFormData.phone) {
+        if (isEditing && clientFormData.id) {
+            updateClient(clientFormData as Client);
+        } else {
+            addClient({
+                id: Date.now().toString(),
+                name: clientFormData.name,
+                phone: clientFormData.phone,
+                email: '' 
+            });
+        }
+        setClientFormData({ name: '', phone: '' });
         setShowAddForm(false);
+        setIsEditing(false);
     }
+  };
+
+  const handleEditClick = () => {
+      if (!selectedClient) return;
+      setClientFormData({ ...selectedClient });
+      setIsEditing(true);
+      setSelectedClient(null); // Close action modal
+      setShowAddForm(true); // Open form
+  };
+
+  const handleTakeOrderClick = () => {
+      if (!selectedClient) return;
+      setPendingOrderClientId(selectedClient.id);
+      setCurrentView('orders');
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,7 +101,7 @@ const Clients = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
         <div className="flex justify-between items-center">
             <h2 className="text-3xl font-bold text-gray-800">Client Management</h2>
             <div className="flex gap-2">
@@ -98,7 +124,7 @@ const Clients = () => {
                     </>
                 )}
                 <button 
-                    onClick={() => setShowAddForm(!showAddForm)}
+                    onClick={() => { setShowAddForm(!showAddForm); setIsEditing(false); setClientFormData({name: '', phone: ''}); }}
                     className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md"
                 >
                     <UserPlus size={18} className="mr-2" />
@@ -107,27 +133,29 @@ const Clients = () => {
             </div>
         </div>
 
-        {/* Add Client Form Inline */}
+        {/* Add/Edit Client Form Inline */}
         {showAddForm && (
             <div className="bg-blue-50 p-6 rounded-xl border border-blue-100 animate-fade-in">
-                <h3 className="font-bold text-blue-900 mb-4">New Client Details</h3>
+                <h3 className="font-bold text-blue-900 mb-4">{isEditing ? 'Edit Client Details' : 'New Client Details'}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <input 
                         placeholder="Full Name" 
                         className="p-3 rounded-lg border border-blue-200 outline-none focus:ring-2 focus:ring-blue-400 text-gray-800"
-                        value={newClient.name}
-                        onChange={e => setNewClient({...newClient, name: e.target.value})}
+                        value={clientFormData.name}
+                        onChange={e => setClientFormData({...clientFormData, name: e.target.value})}
                     />
                     <input 
                         placeholder="Phone Number" 
                         className="p-3 rounded-lg border border-blue-200 outline-none focus:ring-2 focus:ring-blue-400 text-gray-800"
-                        value={newClient.phone}
-                        onChange={e => setNewClient({...newClient, phone: e.target.value})}
+                        value={clientFormData.phone}
+                        onChange={e => setClientFormData({...clientFormData, phone: e.target.value})}
                     />
                 </div>
                 <div className="flex justify-end gap-3">
                     <button onClick={() => setShowAddForm(false)} className="px-4 py-2 text-blue-700 hover:bg-blue-100 rounded-lg">Cancel</button>
-                    <button onClick={handleAddClient} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-sm hover:bg-blue-700">Save Client</button>
+                    <button onClick={handleSaveClient} className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-sm hover:bg-blue-700">
+                        {isEditing ? 'Update Client' : 'Save Client'}
+                    </button>
                 </div>
             </div>
         )}
@@ -154,7 +182,11 @@ const Clients = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                     {filteredClients.map(client => (
-                        <tr key={client.id} className="hover:bg-gray-50">
+                        <tr 
+                            key={client.id} 
+                            onClick={() => setSelectedClient(client)}
+                            className="hover:bg-blue-50 cursor-pointer transition-colors"
+                        >
                             <td className="px-6 py-4">
                                 <div className="font-bold text-gray-800">{client.name}</div>
                             </td>
@@ -172,6 +204,43 @@ const Clients = () => {
                 </tbody>
             </table>
         </div>
+
+        {/* Client Action Modal */}
+        {selectedClient && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl overflow-hidden">
+                    <div className="p-6 text-center border-b border-gray-100">
+                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
+                            {selectedClient.name.charAt(0)}
+                        </div>
+                        <h3 className="text-xl font-bold text-gray-800">{selectedClient.name}</h3>
+                        <p className="text-gray-500">{selectedClient.phone}</p>
+                    </div>
+                    <div className="p-4 grid grid-cols-2 gap-3 bg-gray-50">
+                        <button 
+                            onClick={handleEditClick}
+                            className="flex flex-col items-center justify-center p-4 bg-white border border-gray-200 rounded-xl hover:border-blue-300 hover:shadow-md transition-all text-gray-700 hover:text-blue-600"
+                        >
+                            <Edit size={24} className="mb-2"/>
+                            <span className="font-bold text-sm">Edit Details</span>
+                        </button>
+                        <button 
+                            onClick={handleTakeOrderClick}
+                            className="flex flex-col items-center justify-center p-4 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-md hover:shadow-lg transition-all"
+                        >
+                            <ShoppingCart size={24} className="mb-2"/>
+                            <span className="font-bold text-sm">Take Order</span>
+                        </button>
+                    </div>
+                    <button 
+                        onClick={() => setSelectedClient(null)} 
+                        className="w-full py-3 text-center text-gray-400 hover:text-gray-600 text-sm font-medium border-t border-gray-100"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        )}
     </div>
   );
 };

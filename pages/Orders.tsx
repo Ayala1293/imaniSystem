@@ -1,12 +1,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Trash2, CheckCircle, Package, Search, FileText, Printer, X, CreditCard, AlertTriangle, MessageSquare, Copy, RefreshCw, Truck, Box, User, Settings } from 'lucide-react';
+import { Plus, Trash2, CheckCircle, Package, Search, FileText, Printer, X, CreditCard, AlertTriangle, MessageSquare, Copy, RefreshCw, Truck, Box, User, Settings, Lock, ShoppingCart, Calendar, ArrowLeft } from 'lucide-react';
 import { Order, OrderItem, Product, Client, PaymentTransaction, DynamicAttribute } from '../types';
 import { generateInvoiceMessage } from '../services/geminiService';
 
 const Orders = () => {
-  const { orders, clients, products, addOrder, updateOrder, addPayment, payments, catalogs } = useAppStore();
+  const { orders, clients, products, addOrder, updateOrder, addPayment, payments, catalogs, pendingOrderClientId, setPendingOrderClientId } = useAppStore();
+  const [activeCatalogId, setActiveCatalogId] = useState<string | null>(null);
+
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [clientSearch, setClientSearch] = useState('');
@@ -31,9 +33,34 @@ const Orders = () => {
   const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
   const [paymentMessage, setPaymentMessage] = useState('');
   const [paymentError, setPaymentError] = useState('');
+  const [paymentContext, setPaymentContext] = useState<'FOB' | 'FREIGHT'>('FOB');
 
   // Client Detail View State
   const [viewingClientId, setViewingClientId] = useState<string | null>(null);
+
+  const activeCatalog = catalogs.find(c => c.id === activeCatalogId);
+
+  // --- Auto-Navigation Logic (From Clients Page) ---
+  useEffect(() => {
+      if (pendingOrderClientId) {
+          // If a client is passed from the Clients page, automatically open the drawer
+          // But first, we need to ensure we are in a catalog. 
+          // If no catalog selected, select the most recent 'OPEN' one, or just the first one.
+          if (!activeCatalogId) {
+              const openCat = catalogs.find(c => c.status === 'OPEN') || catalogs[0];
+              if (openCat) setActiveCatalogId(openCat.id);
+          }
+
+          const client = clients.find(c => c.id === pendingOrderClientId);
+          if (client) {
+              setSelectedClient(client);
+              setClientSearch(client.name);
+              setIsDrawerOpen(true);
+          }
+          setPendingOrderClientId(null); // Clear flag
+      }
+  }, [pendingOrderClientId, catalogs, clients, activeCatalogId, setPendingOrderClientId]);
+
 
   const filteredClients = clients.filter(c => 
     c.name.toLowerCase().includes(clientSearch.toLowerCase()) || 
@@ -51,13 +78,39 @@ const Orders = () => {
   const [qtyToAdd, setQtyToAdd] = useState(1);
   const [itemAttributes, setItemAttributes] = useState<DynamicAttribute[]>([]);
 
+  // Helper to parse "34-46" or "S,M,L"
+  const parseOptions = (valString: string): string[] => {
+      // Check for range "34-40"
+      const rangeMatch = valString.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (rangeMatch) {
+          const start = parseInt(rangeMatch[1]);
+          const end = parseInt(rangeMatch[2]);
+          if (!isNaN(start) && !isNaN(end) && start < end) {
+              const arr = [];
+              for(let i=start; i<=end; i++) arr.push(i.toString());
+              return arr;
+          }
+      }
+      // Check for commas "S, M, L" (handle spaces)
+      if (valString.includes(',')) {
+          return valString.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      }
+      // Default single value
+      return [valString];
+  }
+
   // When productToAdd changes, populate default attributes
   useEffect(() => {
     if (productToAdd) {
         const prod = products.find(p => p.id === productToAdd);
         if (prod && prod.attributes) {
-            // Copy attributes from product to allow editing for this specific item order
-            setItemAttributes([...prod.attributes]);
+            // Transform attributes: key is name, value is SELECTED option
+            // We init selected value to the first available option
+            const initialSelection = prod.attributes.map(attr => {
+                const options = parseOptions(attr.value);
+                return { key: attr.key, value: options[0] }; 
+            });
+            setItemAttributes(initialSelection);
         } else {
             setItemAttributes([]);
         }
@@ -72,28 +125,11 @@ const Orders = () => {
       setItemAttributes(newAttrs);
   };
   
-  const updateItemAttributeKey = (index: number, val: string) => {
-      const newAttrs = [...itemAttributes];
-      newAttrs[index].key = val;
-      setItemAttributes(newAttrs);
-  };
-
-  const addItemAttribute = () => {
-      setItemAttributes([...itemAttributes, { key: 'Option', value: '' }]);
-  };
-
-  const deleteItemAttribute = (index: number) => {
-      setItemAttributes(itemAttributes.filter((_, i) => i !== index));
-  };
-
-
   const addToCart = () => {
     if (!productToAdd) return;
     const product = products.find(p => p.id === productToAdd);
     if (!product) return;
 
-    // Check if item with SAME product AND attributes exists
-    // (Simple JSON stringify comparison for deep equality of attributes)
     const existingIndex = cartItems.findIndex(item => 
         item.productId === product.id && 
         JSON.stringify(item.selectedAttributes) === JSON.stringify(itemAttributes)
@@ -111,12 +147,11 @@ const Orders = () => {
           quantity: qtyToAdd,
           fobTotal: product.fobPrice * qtyToAdd,
           freightTotal: 0,
-          selectedAttributes: [...itemAttributes] // Clone current state
+          selectedAttributes: [...itemAttributes] 
         };
         setCartItems([...cartItems, newItem]);
     }
     
-    // Reset form but keep product selected for ease of adding variants? No, reset all.
     setProductToAdd('');
     setQtyToAdd(1);
     setItemAttributes([]);
@@ -125,16 +160,21 @@ const Orders = () => {
   const handleFinalizeOrder = () => {
     if (!selectedClient || cartItems.length === 0) return;
 
+    // Find existing order for this client IN THIS CATALOG
     const existingOrder = orders.find(o => 
         o.clientId === selectedClient.id && 
         !o.isLocked && 
-        o.status !== 'DELIVERED'
+        o.status !== 'DELIVERED' &&
+        // Ensure the existing order belongs to this catalog by checking its items
+        o.items.some(i => {
+            const p = products.find(prod => prod.id === i.productId);
+            return p?.catalogId === activeCatalogId;
+        })
     );
 
     if (existingOrder) {
         const updatedItems = [...existingOrder.items];
         cartItems.forEach(newItem => {
-            // Merge logic strictly checks attributes now
             const existingItemIndex = updatedItems.findIndex(ei => 
                 ei.productId === newItem.productId &&
                 JSON.stringify(ei.selectedAttributes) === JSON.stringify(newItem.selectedAttributes)
@@ -172,7 +212,7 @@ const Orders = () => {
             id: `ord-${Date.now()}`,
             clientId: selectedClient.id,
             orderDate: new Date().toISOString(),
-            status: 'ARRIVED', // Default to Arrived/Pending
+            status: 'ARRIVED',
             fobPaymentStatus: 'UNPAID',
             freightPaymentStatus: 'UNPAID',
             totalFobPaid: 0,
@@ -191,19 +231,17 @@ const Orders = () => {
 
   // --- Payment Modal Logic ---
 
-  const handleStatusChange = (order: Order, newStatus: string) => {
-      if (newStatus === 'PAID_ACTION') {
-          setPaymentOrder(order);
-          setPaymentMessage('');
-          setPaymentError('');
-          setIsPaymentModalOpen(true);
-      }
+  const initiatePayment = (order: Order, type: 'FOB' | 'FREIGHT') => {
+      setPaymentOrder(order);
+      setPaymentContext(type);
+      setPaymentMessage('');
+      setPaymentError('');
+      setIsPaymentModalOpen(true);
   };
 
   const processPayment = () => {
       if (!paymentOrder) return;
 
-      // Extract Code and Amount
       const codeMatch = paymentMessage.match(/([A-Z0-9]{10})/);
       const amountMatch = paymentMessage.match(/Ksh([\d,]+(\.\d{2})?)/);
 
@@ -211,7 +249,6 @@ const Orders = () => {
           const amount = parseFloat(amountMatch[1].replace(/,/g, ''));
           const transactionCode = codeMatch[1];
 
-          // Check duplicate
           if (payments.some(p => p.transactionCode === transactionCode)) {
               setPaymentError('Transaction code already used.');
               return;
@@ -221,8 +258,8 @@ const Orders = () => {
             id: `pay-${Date.now()}`,
             transactionCode: transactionCode,
             amount: amount,
-            payerName: getClientName(paymentOrder.clientId), // Assume matching client
-            clientId: paymentOrder.clientId, // Link directly
+            payerName: getClientName(paymentOrder.clientId),
+            clientId: paymentOrder.clientId,
             date: new Date().toISOString(),
             rawMessage: paymentMessage
           };
@@ -243,13 +280,34 @@ const Orders = () => {
       });
   };
 
+  // --- Invoice Logic ---
+
+  const handleOpenInvoice = (order: Order, type: 'FOB' | 'FREIGHT') => {
+      // Validate Freight Invoice
+      if (type === 'FREIGHT') {
+          const hasArrivedItems = order.items.some(item => {
+              const p = products.find(prod => prod.id === item.productId);
+              return p?.stockStatus === 'ARRIVED';
+          });
+
+          if (!hasArrivedItems) {
+              alert("Cannot generate Freight Invoice. No items in this order have arrived in stock yet. Please update status in Stock Taking.");
+              return;
+          }
+      }
+
+      setInvoiceOrder(order);
+      setInvoiceType(type);
+      setInvoiceViewMode('TEXT');
+      setGeneratedMessage('');
+  };
+
   const handleGenerateMessage = async () => {
     if (!invoiceOrder) return;
     setIsGeneratingMsg(true);
     const client = getClient(invoiceOrder.clientId);
     
-    // Find Deadline: Look at first item -> product -> catalog -> closingDate
-    let deadline = new Date().toISOString(); // Fallback
+    let deadline = new Date().toISOString(); 
     if (invoiceOrder.items.length > 0) {
         const firstProdId = invoiceOrder.items[0].productId;
         const prod = products.find(p => p.id === firstProdId);
@@ -261,9 +319,24 @@ const Orders = () => {
         }
     }
 
+    // Filter Items for Invoice Generation
+    const activeProducts = products.filter(p => {
+        if (invoiceType === 'FOB') return true;
+        return p.stockStatus === 'ARRIVED';
+    });
+
     if (client) {
-        const msg = await generateInvoiceMessage(invoiceOrder, client, products, invoiceType, deadline);
-        setGeneratedMessage(msg);
+        const filteredItems = invoiceOrder.items.filter(item => {
+            if(invoiceType === 'FOB') return true;
+            const p = products.find(prod => prod.id === item.productId);
+            return p?.stockStatus === 'ARRIVED';
+        });
+
+        const tempOrder = { ...invoiceOrder, items: filteredItems };
+
+        const msg = await generateInvoiceMessage(tempOrder, client, products, invoiceType, deadline);
+        const finalMsg = `Order ID: ${invoiceOrder.id.slice(-6).toUpperCase()}\n` + msg;
+        setGeneratedMessage(finalMsg);
     }
     setIsGeneratingMsg(false);
   };
@@ -276,8 +349,59 @@ const Orders = () => {
 
   // --- Filter Logic ---
 
-  const filteredOrders = orders.filter(order => {
-      // 1. Search Filter - ENHANCED
+  // Catalog Selector View
+  if (!activeCatalogId) {
+      return (
+          <div className="space-y-6">
+              <div>
+                  <h2 className="text-3xl font-bold text-gray-800">Running Orders</h2>
+                  <p className="text-gray-500">Select a catalog month to view and manage orders.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {catalogs.map(catalog => (
+                      <div 
+                          key={catalog.id} 
+                          onClick={() => setActiveCatalogId(catalog.id)}
+                          className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
+                      >
+                          <div className="flex justify-between items-start mb-4">
+                              <div className="p-3 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors">
+                                  <ShoppingCart size={24} />
+                              </div>
+                              <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded">
+                                  {new Date(catalog.closingDate).toLocaleDateString()}
+                              </span>
+                          </div>
+                          <h3 className="text-xl font-bold text-gray-800 mb-1">{catalog.name}</h3>
+                          <div className="flex items-center text-sm text-gray-500 mb-4">
+                              <Calendar size={14} className="mr-2" />
+                              <span>Deadline: {new Date(catalog.closingDate).toLocaleDateString()}</span>
+                          </div>
+                          <div className="text-xs text-gray-400">
+                              {/* Count orders for this catalog */}
+                              {orders.filter(o => o.items.some(i => {
+                                  const p = products.find(prod => prod.id === i.productId);
+                                  return p?.catalogId === catalog.id;
+                              })).length} Active Orders
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      );
+  }
+
+  // --- Filter Orders for Active Catalog ---
+  const catalogOrders = orders.filter(order => 
+      order.items.some(item => {
+          const product = products.find(p => p.id === item.productId);
+          return product?.catalogId === activeCatalogId;
+      })
+  );
+
+  const filteredOrders = catalogOrders.filter(order => {
+      // 1. Search Filter
       if (orderSearchTerm) {
           const term = orderSearchTerm.toLowerCase();
           const client = getClient(order.clientId);
@@ -287,14 +411,10 @@ const Orders = () => {
             client?.phone.includes(term);
           
           const idMatch = order.id.toLowerCase().includes(term);
-
-          // NEW: Search inside items (Product Name)
           const itemMatch = order.items.some(item => {
               const p = products.find(prod => prod.id === item.productId);
               return p?.name.toLowerCase().includes(term);
           });
-
-          // NEW: Search Status
           const statusMatch = order.status.toLowerCase().includes(term);
 
           if (!clientMatch && !idMatch && !itemMatch && !statusMatch) {
@@ -312,30 +432,46 @@ const Orders = () => {
       } else if (activeTab === 'CLEARED_FREIGHT') {
           return order.freightPaymentStatus === 'PAID';
       } else if (activeTab === 'DELIVERY') {
-          return true; // Show all active orders (filtered by search)
+          return true;
       }
       return false;
   });
 
+  const catalogProducts = products.filter(p => p.catalogId === activeCatalogId);
+
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-4 mb-2">
+            <button 
+                onClick={() => setActiveCatalogId(null)}
+                className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+            >
+                <ArrowLeft size={20} className="text-gray-600"/>
+            </button>
+            <div>
+                <h2 className="text-3xl font-bold text-gray-800">{activeCatalog?.name} Orders</h2>
+                <p className="text-sm text-gray-500">Manage orders for this shipment cycle.</p>
+            </div>
+      </div>
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-            <h2 className="text-3xl font-bold text-gray-800">Running Orders</h2>
-            <p className="text-sm text-gray-500">Manage monthly accumulated orders</p>
+        <div className="flex-1 w-full md:w-auto">
+             {/* Spacing filler */}
         </div>
         
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-            {/* Main Order Search Bar */}
-            <div className="bg-white p-2 rounded-lg border border-gray-200 flex items-center shadow-sm flex-1 md:w-64">
+            <div className="bg-white p-2 rounded-lg border border-gray-200 flex items-center shadow-sm flex-1 md:w-80">
                 <Search className="text-gray-400 mr-2" size={18} />
                 <input 
                     type="text" 
-                    placeholder="Search client, phone, item, or status..." 
-                    className="flex-1 outline-none text-sm text-black bg-white"
+                    placeholder="Search by Client Name, Phone or Order ID..." 
+                    className="flex-1 outline-none text-sm text-gray-900 bg-white"
                     value={orderSearchTerm}
                     onChange={(e) => setOrderSearchTerm(e.target.value)}
                 />
+                 {orderSearchTerm && (
+                    <button onClick={() => setOrderSearchTerm('')} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
+                )}
             </div>
 
             <button 
@@ -366,7 +502,7 @@ const Orders = () => {
             onClick={() => setActiveTab('CLEARED_FOB')}
              className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 whitespace-nowrap ${activeTab === 'CLEARED_FOB' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           >
-            FOB Cleared
+            FOB Cleared (Ready for Freight)
           </button>
           <button 
             onClick={() => setActiveTab('CLEARED_FREIGHT')}
@@ -408,11 +544,12 @@ const Orders = () => {
                 ) : (
                     filteredOrders.map(order => {
                         const totalVal = order.items.reduce((acc, i) => acc + i.fobTotal + i.freightTotal, 0);
-                        const balance = totalVal - order.totalFobPaid;
+                        const balance = totalVal - order.totalFobPaid - order.totalFreightPaid;
+                        const isPickedOrDelivered = order.status === 'SHIPPED' || order.status === 'DELIVERED';
                         
                         return (
                             <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                                <td className="px-6 py-4 text-sm font-medium text-gray-900">#{order.id.slice(-6)}</td>
+                                <td className="px-6 py-4 text-sm font-medium text-gray-900">#{order.id.slice(-6).toUpperCase()}</td>
                                 <td className="px-6 py-4 text-sm text-gray-700 font-medium">
                                     <button 
                                         onClick={() => setViewingClientId(order.clientId)} 
@@ -456,32 +593,41 @@ const Orders = () => {
                                     <>
                                         <td className="px-6 py-4">
                                             {activeTab === 'UNPAID' ? (
-                                                <select 
-                                                    className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-1 outline-none focus:ring-1 focus:ring-red-400 font-bold"
-                                                    value="UNPAID"
-                                                    onChange={(e) => handleStatusChange(order, e.target.value)}
+                                                <button 
+                                                    onClick={() => initiatePayment(order, 'FOB')}
+                                                    className="px-3 py-1 bg-red-100 text-red-600 text-xs font-bold rounded hover:bg-red-200"
                                                 >
-                                                    <option value="UNPAID">Unpaid</option>
-                                                    <option value="PAID_ACTION">Pay Order...</option>
-                                                </select>
+                                                    Pay FOB...
+                                                </button>
                                             ) : activeTab === 'PARTIAL' ? (
                                                 <div className="flex flex-col">
                                                     <span className="text-xs font-bold text-orange-600 bg-orange-100 px-2 py-1 rounded w-fit mb-1">Partial</span>
                                                     <span className="text-xs text-gray-500">Bal: Ksh {balance.toLocaleString()}</span>
                                                     <button 
-                                                        onClick={() => handleStatusChange(order, 'PAID_ACTION')}
+                                                        onClick={() => initiatePayment(order, 'FOB')}
                                                         className="text-xs text-blue-600 hover:underline mt-1 text-left"
                                                     >
                                                         Add Payment
                                                     </button>
                                                 </div>
+                                            ) : activeTab === 'CLEARED_FOB' ? (
+                                                <div className="flex flex-col gap-2">
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold w-fit bg-green-100 text-green-700">
+                                                        FOB Cleared
+                                                    </span>
+                                                    {order.freightPaymentStatus !== 'PAID' && (
+                                                        <button 
+                                                            onClick={() => initiatePayment(order, 'FREIGHT')}
+                                                            className="flex items-center px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded hover:bg-blue-200 w-fit"
+                                                        >
+                                                            <Plus size={10} className="mr-1"/> Add Freight Pay
+                                                        </button>
+                                                    )}
+                                                </div>
                                             ) : (
                                                 <div className="flex flex-col gap-1">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold w-fit ${order.fobPaymentStatus === 'PAID' ? 'bg-green-100 text-green-700' : 'bg-red-50 text-red-500'}`}>
-                                                        FOB: {order.fobPaymentStatus}
-                                                    </span>
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold w-fit ${order.freightPaymentStatus === 'PAID' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                                                        Freight: {order.freightPaymentStatus}
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold w-fit bg-green-100 text-green-700">
+                                                        All Paid
                                                     </span>
                                                 </div>
                                             )}
@@ -491,12 +637,29 @@ const Orders = () => {
                                 )}
                                 
                                 <td className="px-6 py-4">
-                                    <button 
-                                        onClick={() => { setInvoiceOrder(order); setInvoiceViewMode('TEXT'); setGeneratedMessage(''); setInvoiceType('FOB'); }}
-                                        className="text-xs flex items-center text-blue-600 hover:text-blue-900 bg-blue-50 px-3 py-2 rounded border border-blue-200 hover:bg-blue-100 transition-colors"
-                                    >
-                                        <MessageSquare size={12} className="mr-1"/> Invoice
-                                    </button>
+                                    {isPickedOrDelivered ? (
+                                        <span className="text-xs text-gray-400 font-medium flex items-center">
+                                            <Lock size={12} className="mr-1"/> Completed
+                                        </span>
+                                    ) : (
+                                        <div className="flex flex-col gap-2">
+                                            <button 
+                                                onClick={() => handleOpenInvoice(order, 'FOB')}
+                                                className="text-xs flex items-center justify-center text-blue-600 hover:text-blue-900 bg-blue-50 px-3 py-1.5 rounded border border-blue-200 hover:bg-blue-100 transition-colors font-medium"
+                                            >
+                                                <MessageSquare size={12} className="mr-1"/> FOB Invoice
+                                            </button>
+                                            
+                                            {order.fobPaymentStatus === 'PAID' && (
+                                                <button 
+                                                    onClick={() => handleOpenInvoice(order, 'FREIGHT')}
+                                                    className="text-xs flex items-center justify-center text-purple-600 hover:text-purple-900 bg-purple-50 px-3 py-1.5 rounded border border-purple-200 hover:bg-purple-100 transition-colors font-medium"
+                                                >
+                                                    <MessageSquare size={12} className="mr-1"/> Freight Invoice
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
                                 </td>
                             </tr>
                         )
@@ -514,87 +677,22 @@ const Orders = () => {
                 {(() => {
                     const client = getClient(viewingClientId);
                     const clientOrders = orders.filter(o => o.clientId === viewingClientId);
-                    
-                    // Aggregate totals
-                    const totalItems = clientOrders.reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0), 0);
-                    const totalFobCost = clientOrders.reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.fobTotal, 0), 0);
-                    const totalFreightCost = clientOrders.reduce((sum, o) => sum + o.items.reduce((s, i) => s + i.freightTotal, 0), 0);
-                    const totalPaid = clientOrders.reduce((sum, o) => sum + o.totalFobPaid + o.totalFreightPaid, 0);
-                    const balance = (totalFobCost + totalFreightCost) - totalPaid;
-
                     return (
                         <>
                             <div className="bg-slate-900 text-white p-6 flex justify-between items-start">
                                 <div>
-                                    <div className="flex items-center gap-3 mb-1">
-                                        <div className="bg-blue-500 p-2 rounded-full"><User size={20}/></div>
-                                        <div>
-                                            <h2 className="text-xl font-bold">{client?.name}</h2>
-                                            <p className="text-blue-200 text-sm">{client?.phone}</p>
-                                        </div>
-                                    </div>
+                                    <h2 className="text-xl font-bold">{client?.name}</h2>
+                                    <p className="text-blue-200 text-sm">{client?.phone}</p>
                                 </div>
                                 <button onClick={() => setViewingClientId(null)} className="p-2 hover:bg-slate-700 rounded-full transition-colors"><X size={20}/></button>
                             </div>
-                            
-                            <div className="flex border-b border-gray-100 bg-gray-50">
-                                <div className="flex-1 p-4 border-r border-gray-200 text-center">
-                                    <p className="text-xs text-gray-500 uppercase tracking-wide">Total Items</p>
-                                    <p className="text-xl font-bold text-slate-800">{totalItems}</p>
-                                </div>
-                                <div className="flex-1 p-4 border-r border-gray-200 text-center">
-                                    <p className="text-xs text-gray-500 uppercase tracking-wide">Total Value</p>
-                                    <p className="text-xl font-bold text-slate-800">Ksh {(totalFobCost + totalFreightCost).toLocaleString()}</p>
-                                </div>
-                                <div className="flex-1 p-4 border-r border-gray-200 text-center">
-                                    <p className="text-xs text-gray-500 uppercase tracking-wide">Paid</p>
-                                    <p className="text-xl font-bold text-green-600">Ksh {totalPaid.toLocaleString()}</p>
-                                </div>
-                                <div className="flex-1 p-4 text-center">
-                                    <p className="text-xs text-gray-500 uppercase tracking-wide">Balance</p>
-                                    <p className={`text-xl font-bold ${balance > 0 ? 'text-red-600' : 'text-slate-400'}`}>Ksh {balance.toLocaleString()}</p>
-                                </div>
-                            </div>
-
                             <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50">
-                                <h3 className="font-bold text-gray-800 mb-3 flex items-center"><Package size={16} className="mr-2"/> Consolidated Items (This Month)</h3>
-                                <div className="space-y-2">
-                                    {clientOrders.map(order => (
-                                        <div key={order.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-                                            <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-100">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-600">#{order.id.slice(-6)}</span>
-                                                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
-                                                        order.status === 'DELIVERED' ? 'bg-green-100 text-green-700' : 
-                                                        order.status === 'SHIPPED' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'
-                                                    }`}>
-                                                        {order.status === 'SHIPPED' ? 'PICKED' : order.status === 'ARRIVED' || order.status === 'CONFIRMED' ? 'PENDING' : order.status}
-                                                    </span>
-                                                </div>
-                                                <div className="text-xs text-gray-400">{new Date(order.orderDate).toLocaleDateString()}</div>
-                                            </div>
-                                            <div className="space-y-1">
-                                                {order.items.map((item, idx) => {
-                                                    const attrs = item.selectedAttributes.map(a => `${a.key}: ${a.value}`).join(', ');
-                                                    return (
-                                                        <div key={idx} className="flex justify-between text-sm">
-                                                            <div className="text-gray-700">
-                                                                {item.quantity} x {getProductName(item.productId)}
-                                                                {attrs && <span className="text-xs text-gray-500 ml-2">({attrs})</span>}
-                                                            </div>
-                                                            <span className="font-medium">Ksh {(item.fobTotal + item.freightTotal).toLocaleString()}</span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {clientOrders.length === 0 && <p className="text-center text-gray-400 py-4">No active orders found.</p>}
-                                </div>
-                            </div>
-                            
-                            <div className="p-4 border-t border-gray-200 bg-white flex justify-end">
-                                <button onClick={() => setViewingClientId(null)} className="px-6 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 font-medium">Close Details</button>
+                                {clientOrders.map(order => (
+                                    <div key={order.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm mb-2">
+                                        <p className="font-bold text-gray-800">Order #{order.id.slice(-6)}</p>
+                                        <p className="text-xs text-gray-500">{order.items.length} items</p>
+                                    </div>
+                                ))}
                             </div>
                         </>
                     );
@@ -607,12 +705,13 @@ const Orders = () => {
       {isPaymentModalOpen && paymentOrder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in">
-                  <div className="bg-blue-600 p-6 flex justify-between items-center text-white">
+                  {/* ... same payment modal content ... */}
+                   <div className="bg-blue-600 p-6 flex justify-between items-center text-white">
                       <div className="flex items-center">
                           <CreditCard className="mr-3" />
                           <div>
                               <h3 className="font-bold text-lg">Process Payment</h3>
-                              <p className="text-blue-100 text-xs">{getClientName(paymentOrder.clientId)}</p>
+                              <p className="text-blue-100 text-xs">For {paymentContext} - {getClientName(paymentOrder.clientId)}</p>
                           </div>
                       </div>
                       <button onClick={() => setIsPaymentModalOpen(false)} className="text-blue-200 hover:text-white"><X /></button>
@@ -621,15 +720,17 @@ const Orders = () => {
                       <div className="mb-4 bg-gray-50 p-3 rounded border border-gray-200 text-sm">
                           <div className="flex justify-between mb-1">
                             <span className="text-gray-500">Total Order Value:</span>
-                            <span className="font-bold">Ksh {paymentOrder.items.reduce((s,i) => s + i.fobTotal, 0).toLocaleString()}</span>
+                            <span className="font-bold text-gray-800">Ksh {paymentOrder.items.reduce((s,i) => s + i.fobTotal + i.freightTotal, 0).toLocaleString()}</span>
                           </div>
                           <div className="flex justify-between text-green-700">
-                             <span>Already Paid:</span>
-                             <span>Ksh {paymentOrder.totalFobPaid.toLocaleString()}</span>
+                             <span>Already Paid (Total):</span>
+                             <span>Ksh {(paymentOrder.totalFobPaid + paymentOrder.totalFreightPaid).toLocaleString()}</span>
                           </div>
                       </div>
 
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Paste M-Pesa Message</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Paste {paymentContext === 'FREIGHT' ? 'Freight' : 'M-Pesa'} Confirmation Message
+                      </label>
                       <textarea 
                         className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-mono bg-gray-50 text-gray-800"
                         placeholder="e.g. QWE123456 Confirmed. Ksh5,000.00 sent to SHOP..."
@@ -664,15 +765,14 @@ const Orders = () => {
       {/* Invoice Modal */}
       {invoiceOrder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/80 backdrop-blur-sm p-4 overflow-y-auto">
-              <div className={`bg-[#fcfcfc] shadow-2xl overflow-hidden flex flex-col relative transition-all duration-300 ${
+              {/* ... same invoice modal ... */}
+               <div className={`bg-[#fcfcfc] shadow-2xl overflow-hidden flex flex-col relative transition-all duration-300 ${
                   invoiceViewMode === 'VISUAL' 
                   ? 'w-[800px] max-h-[95vh] rounded-xl' 
                   : 'w-full max-w-xl min-h-[500px] rounded-2xl'
               }`}>
-                  
                   {/* Modal Controls */}
                   <div className="absolute top-4 right-4 flex gap-2 print:hidden z-10 bg-white/80 backdrop-blur rounded-full p-1 shadow-sm border border-gray-100">
-                      {/* View Switcher */}
                       <div className="flex bg-gray-100 rounded-full p-1 mr-4">
                           <button onClick={() => setInvoiceViewMode('VISUAL')} className={`flex items-center px-3 py-1 rounded-full text-xs font-medium transition-all ${invoiceViewMode === 'VISUAL' ? 'bg-white shadow text-black' : 'text-gray-500'}`}>
                              <FileText size={12} className="mr-1" /> Visual
@@ -682,26 +782,8 @@ const Orders = () => {
                           </button>
                       </div>
 
-                      {/* Invoice Type Switcher */}
-                      <div className="flex bg-gray-100 rounded-full p-1 mr-2">
-                          <button onClick={() => {setInvoiceType('FOB'); setGeneratedMessage('');}} className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${invoiceType === 'FOB' ? 'bg-white shadow text-black' : 'text-gray-500'}`}>FOB</button>
-                          {(() => {
-                              const isFobFullyPaid = invoiceOrder.fobPaymentStatus === 'PAID';
-                              return (
-                                <button 
-                                    onClick={() => {if(isFobFullyPaid) { setInvoiceType('FREIGHT'); setGeneratedMessage(''); }}} 
-                                    disabled={!isFobFullyPaid}
-                                    title={!isFobFullyPaid ? "FOB must be fully paid before generating Freight Invoice" : ""}
-                                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-                                        invoiceType === 'FREIGHT' 
-                                            ? 'bg-white shadow text-black' 
-                                            : (!isFobFullyPaid ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-black')
-                                    }`}
-                                >
-                                    Freight
-                                </button>
-                              );
-                          })()}
+                      <div className="px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-700 mr-2 border border-gray-200">
+                          {invoiceType} INVOICE
                       </div>
                       
                       <div className="h-6 w-px bg-gray-300 mx-1 self-center"></div>
@@ -719,26 +801,27 @@ const Orders = () => {
                   {/* VISUAL INVOICE CONTENT */}
                   {invoiceViewMode === 'VISUAL' && (
                   <div className="flex-1 overflow-y-auto p-8 md:p-16 flex flex-col h-full text-black animate-fade-in scrollbar-thin">
-                        {/* Header: Logo & Title */}
                         <div className="flex justify-between items-start mb-24">
                             <div className="text-8xl font-serif-display leading-none">&</div>
                             <div className="mt-4">
-                                <h1 className="text-5xl font-serif-display uppercase tracking-widest">INVOICE</h1>
+                                <h1 className="text-5xl font-serif-display uppercase tracking-widest">{invoiceType} INVOICE</h1>
                             </div>
                         </div>
 
-                        {/* Billed To Section */}
                         <div className="flex justify-between items-start mb-20">
                             <div>
                                 <h3 className="text-xs font-bold uppercase tracking-[0.2em] mb-4">BILLED TO:</h3>
                                 <p className="text-lg font-medium">{getClientName(invoiceOrder.clientId)}</p>
                                 <p className="text-gray-600 text-sm mt-1">{getClient(invoiceOrder.clientId)?.phone}</p>
-                                <p className="text-gray-500 text-sm mt-1">Nairobi, Kenya</p>
                             </div>
                             <div className="text-right">
                                 <div className="mb-2">
                                     <span className="text-gray-500 text-xs uppercase tracking-wider mr-6">Invoice No.</span>
                                     <span className="text-sm font-medium">{invoiceOrder.id.slice(-6).toUpperCase()}</span>
+                                </div>
+                                <div className="mb-2">
+                                    <span className="text-gray-500 text-xs uppercase tracking-wider mr-6">Order ID</span>
+                                    <span className="text-sm font-bold">{invoiceOrder.id.toUpperCase()}</span>
                                 </div>
                                 <div>
                                     <span className="text-gray-500 text-xs uppercase tracking-wider mr-6">Date</span>
@@ -747,7 +830,6 @@ const Orders = () => {
                             </div>
                         </div>
 
-                        {/* Items Table */}
                         <div className="mb-12 flex-grow">
                             <table className="w-full">
                                 <thead>
@@ -764,6 +846,10 @@ const Orders = () => {
                                         const lineTotal = invoiceType === 'FOB' ? item.fobTotal : item.freightTotal;
                                         const unitPrice = lineTotal / item.quantity;
                                         
+                                        if (invoiceType === 'FREIGHT' && product?.stockStatus !== 'ARRIVED') {
+                                            return null; 
+                                        }
+
                                         if(invoiceType === 'FREIGHT' && lineTotal === 0) return null;
 
                                         return (
@@ -782,14 +868,23 @@ const Orders = () => {
                                     })}
                                 </tbody>
                             </table>
+                            {invoiceType === 'FREIGHT' && (
+                                <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 text-xs border border-yellow-200 rounded">
+                                    <strong>Note:</strong> Only items marked as "ARRIVED" in the Stock Taking section are included in this Freight Invoice.
+                                </div>
+                            )}
                         </div>
 
-                        {/* Totals & Footer */}
                         <div>
                             <div className="flex justify-end mb-16">
                                 <div className="w-64">
                                     {(() => {
-                                        const subtotal = invoiceOrder.items.reduce((s, i) => s + (invoiceType === 'FOB' ? i.fobTotal : i.freightTotal), 0);
+                                        const subtotal = invoiceOrder.items.reduce((s, i) => {
+                                            const prod = products.find(p => p.id === i.productId);
+                                            if (invoiceType === 'FREIGHT' && prod?.stockStatus !== 'ARRIVED') return s;
+                                            return s + (invoiceType === 'FOB' ? i.fobTotal : i.freightTotal);
+                                        }, 0);
+                                        
                                         const paid = invoiceType === 'FOB' ? invoiceOrder.totalFobPaid : invoiceOrder.totalFreightPaid;
                                         const balance = Math.max(0, subtotal - paid);
 
@@ -798,10 +893,6 @@ const Orders = () => {
                                                 <div className="flex justify-between py-2 text-sm">
                                                     <span className="font-bold">Subtotal</span>
                                                     <span>Ksh {subtotal.toLocaleString()}</span>
-                                                </div>
-                                                <div className="flex justify-between py-2 text-sm text-gray-500">
-                                                    <span>Tax (0%)</span>
-                                                    <span>$0</span>
                                                 </div>
                                                 <div className="flex justify-between py-4 border-t border-black mt-2">
                                                     <span className="text-xl font-bold">Total</span>
@@ -820,11 +911,11 @@ const Orders = () => {
                   </div>
                   )}
 
-                  {/* AI TEXT MESSAGE CONTENT */}
+                   {/* AI TEXT MESSAGE CONTENT */}
                   {invoiceViewMode === 'TEXT' && (
                       <div className="p-8 flex flex-col h-full items-center justify-center bg-gray-50 animate-fade-in mt-12">
                           <div className="w-full bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-200">
-                              <div className="bg-[#075e54] text-white p-4 flex items-center justify-between">
+                               <div className="bg-[#075e54] text-white p-4 flex items-center justify-between">
                                   <div className="flex items-center gap-2">
                                     <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
                                         <MessageSquare size={16} />
@@ -870,14 +961,10 @@ const Orders = () => {
                                       </>
                                   )}
                               </div>
-                              <div className="bg-white p-3 text-xs text-center text-gray-400">
-                                  AI-generated content. Review before sending.
-                              </div>
                           </div>
                       </div>
                   )}
-
-              </div>
+               </div>
           </div>
       )}
 
@@ -887,7 +974,7 @@ const Orders = () => {
           <div className="w-full max-w-md bg-white h-full shadow-2xl flex flex-col animate-slide-in">
             <div className="p-6 border-b border-gray-100 bg-gray-50">
               <h3 className="text-xl font-bold text-gray-800">Create / Update Order</h3>
-              <p className="text-sm text-gray-500">Add items to client order.</p>
+              <p className="text-sm text-gray-500">Adding items to <strong>{activeCatalog?.name}</strong>.</p>
             </div>
             
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -937,38 +1024,52 @@ const Orders = () => {
                 <h4 className="font-semibold text-gray-700 mb-3 flex items-center"><Package size={16} className="mr-2"/> Add Item</h4>
                 <div className="space-y-3">
                     <select 
-                        className="w-full p-2 border border-gray-300 rounded outline-none text-black bg-white shadow-sm"
+                        className="w-full p-2 border border-gray-300 rounded outline-none text-gray-900 bg-white shadow-sm"
                         value={productToAdd}
                         onChange={(e) => setProductToAdd(e.target.value)}
                     >
-                        <option value="">Select Product</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.name} (Ksh {p.fobPrice})</option>)}
+                        <option value="">Select Product from {activeCatalog?.name}</option>
+                        {catalogProducts.map(p => <option key={p.id} value={p.id}>{p.name} (Ksh {p.fobPrice})</option>)}
                     </select>
                     
                     {productToAdd && (
                         <div className="p-3 bg-white rounded border border-gray-100 space-y-2">
-                             <div className="flex justify-between items-center">
-                                 <label className="text-xs font-bold text-gray-500 uppercase">Product Variables</label>
-                                 <button onClick={addItemAttribute} className="text-xs text-blue-600 hover:text-blue-800 flex items-center"><Plus size={10} className="mr-1"/> Add Variable</button>
+                             <div className="flex justify-between items-center mb-2">
+                                 <label className="text-xs font-bold text-gray-500 uppercase">Product Options</label>
                              </div>
-                             {itemAttributes.map((attr, idx) => (
-                                 <div key={idx} className="flex gap-2 items-center mb-2">
-                                     <input 
-                                         className="w-20 p-1 border border-gray-300 rounded text-xs text-gray-800 bg-white font-medium"
-                                         value={attr.key}
-                                         onChange={(e) => updateItemAttributeKey(idx, e.target.value)}
-                                         placeholder="Name"
-                                     />
-                                     <input 
-                                        className="flex-1 p-1 border border-gray-300 rounded text-sm text-gray-800 bg-white"
-                                        placeholder="Value"
-                                        value={attr.value}
-                                        onChange={(e) => updateItemAttributeValue(idx, e.target.value)}
-                                     />
-                                     <button onClick={() => deleteItemAttribute(idx)} className="text-gray-400 hover:text-red-500"><X size={14}/></button>
-                                 </div>
-                             ))}
-                             {itemAttributes.length === 0 && <p className="text-xs text-gray-400 italic">No variables defined.</p>}
+                             
+                             {itemAttributes.length === 0 ? (
+                                 <p className="text-xs text-gray-400 italic">No variables defined for this product.</p>
+                             ) : (
+                                 itemAttributes.map((attr, idx) => {
+                                     const product = products.find(p => p.id === productToAdd);
+                                     const originalAttr = product?.attributes.find(a => a.key === attr.key);
+                                     const options = originalAttr ? parseOptions(originalAttr.value) : [];
+
+                                     return (
+                                        <div key={idx} className="flex gap-2 items-center mb-2">
+                                            <span className="w-20 text-xs font-bold text-gray-700">{attr.key}:</span>
+                                            {options.length > 1 ? (
+                                                <select
+                                                    className="flex-1 p-2 border border-gray-300 rounded text-sm text-gray-800 bg-white outline-none"
+                                                    value={attr.value}
+                                                    onChange={(e) => updateItemAttributeValue(idx, e.target.value)}
+                                                >
+                                                    {options.map((opt, i) => (
+                                                        <option key={i} value={opt}>{opt}</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input 
+                                                    className="flex-1 p-2 border border-gray-200 bg-gray-50 rounded text-sm text-gray-500"
+                                                    value={attr.value}
+                                                    readOnly
+                                                />
+                                            )}
+                                        </div>
+                                     );
+                                 })
+                             )}
                         </div>
                     )}
 
@@ -977,7 +1078,7 @@ const Orders = () => {
                         <input 
                             type="number" 
                             min="1" 
-                            className="w-24 p-2 border border-gray-300 rounded outline-none text-black bg-white shadow-sm font-bold"
+                            className="w-24 p-2 border border-gray-300 rounded outline-none text-gray-900 bg-white shadow-sm font-bold"
                             value={qtyToAdd}
                             onChange={(e) => setQtyToAdd(parseInt(e.target.value))}
                         />
@@ -1008,7 +1109,7 @@ const Orders = () => {
                                 )}
                             </div>
                             <div className="flex items-center gap-3">
-                                <span className="font-bold text-sm">Ksh {item.fobTotal.toLocaleString()}</span>
+                                <span className="font-bold text-sm text-gray-800">Ksh {item.fobTotal.toLocaleString()}</span>
                                 <button 
                                     onClick={() => setCartItems(cartItems.filter((_, i) => i !== idx))}
                                     className="text-red-400 hover:text-red-600"
@@ -1019,9 +1120,9 @@ const Orders = () => {
                         </div>
                     ))
                 )}
-                {selectedClient && orders.find(o => o.clientId === selectedClient.id && !o.isLocked) && (
+                {selectedClient && orders.find(o => o.clientId === selectedClient.id && !o.isLocked && o.items.some(i => {const p = products.find(prod => prod.id === i.productId); return p?.catalogId === activeCatalogId;})) && (
                     <div className="mt-4 p-3 bg-yellow-50 text-yellow-800 text-xs rounded border border-yellow-200">
-                        Note: This client has an existing open order. These items will be merged into it.
+                        Note: This client has an existing open order in this catalog. These items will be merged.
                     </div>
                 )}
               </div>

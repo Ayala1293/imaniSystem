@@ -30,7 +30,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     ],
     fobPrice: 15000.00,
     freightCharge: 4500.00,
-    category: 'Kitchenware'
+    category: 'Kitchenware',
+    stockStatus: 'PENDING',
+    stockCounts: {}
   },
   {
     id: 'p2',
@@ -44,7 +46,9 @@ export const INITIAL_PRODUCTS: Product[] = [
     ],
     fobPrice: 3500.00,
     freightCharge: 500.00,
-    category: 'Electronics'
+    category: 'Electronics',
+    stockStatus: 'ARRIVED',
+    stockCounts: { "Color:Black, Connectivity:Bluetooth 5.3": 50 }
   }
 ];
 

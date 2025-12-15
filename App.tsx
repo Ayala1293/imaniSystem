@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+
+import React from 'react';
 import { AppProvider, useAppStore } from './store';
 import Sidebar from './components/Sidebar';
 import { MOCK_USERS } from './constants';
@@ -11,6 +12,7 @@ import Clients from './pages/Clients';
 import Payments from './pages/Payments';
 import Reports from './pages/Reports';
 import Freight from './pages/Freight';
+import Stock from './pages/Stock';
 
 const LoginScreen = () => {
   const { login } = useAppStore();
@@ -41,7 +43,7 @@ const LoginScreen = () => {
           ))}
         </div>
         <p className="mt-8 text-center text-xs text-gray-400">
-            System v2.5.0 • Secure Encryption Enabled
+            System v2.7.0 • Secure Encryption Enabled
         </p>
       </div>
     </div>
@@ -49,28 +51,28 @@ const LoginScreen = () => {
 };
 
 const MainLayout = () => {
-  const [activePage, setActivePage] = useState('orders');
-  const { currentUser } = useAppStore();
+  const { currentUser, currentView } = useAppStore();
 
   if (!currentUser) {
     return <LoginScreen />;
   }
 
   const renderPage = () => {
-    switch (activePage) {
+    switch (currentView) {
       case 'products': return <Products />;
       case 'orders': return <Orders />;
       case 'clients': return <Clients />;
       case 'payments': return <Payments />;
       case 'reports': return <Reports />;
       case 'freight': return <Freight />;
+      case 'stock': return <Stock />;
       default: return <Orders />;
     }
   };
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <Sidebar activePage={activePage} setActivePage={setActivePage} />
+      <Sidebar />
       <main className="flex-1 ml-64 overflow-auto p-8">
         <div className="max-w-7xl mx-auto">
             {renderPage()}

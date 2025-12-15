@@ -1,14 +1,17 @@
 
 import React, { useState } from 'react';
 import { useAppStore } from '../store';
-import { Container, Edit2, Search, Save, AlertCircle } from 'lucide-react';
+import { Container, Edit2, Search, Save, AlertCircle, FolderOpen, Calendar, ArrowLeft } from 'lucide-react';
 import { Product } from '../types';
 
 const Freight = () => {
-  const { products, updateProduct, orders, updateOrder } = useAppStore();
+  const { products, updateProduct, orders, updateOrder, catalogs } = useAppStore();
+  const [activeCatalogId, setActiveCatalogId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempFreight, setTempFreight] = useState<number>(0);
+
+  const activeCatalog = catalogs.find(c => c.id === activeCatalogId);
 
   const handleStartEdit = (product: Product) => {
       setEditingId(product.id);
@@ -23,7 +26,6 @@ const Freight = () => {
      updateProduct(updatedProduct);
 
      // 2. Propagate this change to all active (non-delivered, non-locked) orders
-     // This automates the "Set Freight" process for running orders
      orders.forEach(order => {
          // Respect the 'isLocked' flag. Do not change prices for closed months/orders.
          if (order.status === 'DELIVERED' || order.isLocked) return; 
@@ -63,26 +65,71 @@ const Freight = () => {
      setEditingId(null);
   };
 
-  const filteredProducts = products.filter(p => 
+  // View 1: Catalog Selection
+  if (!activeCatalogId) {
+      return (
+          <div className="space-y-6">
+              <div>
+                  <h2 className="text-3xl font-bold text-gray-800">Set Freight Charges</h2>
+                  <p className="text-gray-500">Select a monthly catalog to configure freight costs for its products.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {catalogs.map(catalog => (
+                      <div 
+                          key={catalog.id} 
+                          onClick={() => setActiveCatalogId(catalog.id)}
+                          className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
+                      >
+                          <div className="flex justify-between items-start mb-4">
+                              <div className="p-3 bg-purple-50 text-purple-600 rounded-lg group-hover:bg-purple-100 transition-colors">
+                                  <Container size={24} />
+                              </div>
+                              <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded">
+                                  {new Date(catalog.closingDate).toLocaleDateString()}
+                              </span>
+                          </div>
+                          <h3 className="text-xl font-bold text-gray-800 mb-1">{catalog.name}</h3>
+                          <div className="flex items-center text-sm text-gray-500 mb-4">
+                              <Calendar size={14} className="mr-2" />
+                              <span>Deadline: {new Date(catalog.closingDate).toLocaleDateString()}</span>
+                          </div>
+                          <div className="text-xs text-gray-400">
+                              {products.filter(p => p.catalogId === catalog.id).length} Products to configure
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      );
+  }
+
+  // View 2: Product List for Selected Catalog
+  const currentCatalogProducts = products.filter(p => p.catalogId === activeCatalogId);
+  const filteredProducts = currentCatalogProducts.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.category.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
       <div className="space-y-6">
-          <div className="flex justify-between items-end">
+          <div className="flex items-center gap-4 mb-2">
+            <button 
+                onClick={() => setActiveCatalogId(null)}
+                className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+            >
+                <ArrowLeft size={20} className="text-gray-600"/>
+            </button>
             <div>
-                <div className="flex items-center text-blue-800 mb-2">
-                    <Container className="mr-3" size={28}/>
-                    <h2 className="text-3xl font-bold">Set Product Freight</h2>
-                </div>
-                <p className="text-gray-500 max-w-2xl">
-                    Define freight charges per unit for each product. 
-                    Updating a product here will automatically recalculate freight totals for all currently active running orders.
+                <h2 className="text-3xl font-bold text-gray-800">{activeCatalog?.name} Freight</h2>
+                <p className="text-sm text-gray-500">
+                    Set freight charges per unit. Updates auto-sync to active orders.
                 </p>
             </div>
-            
-            <div className="bg-white p-2 rounded-lg border border-gray-200 flex items-center w-64 shadow-sm">
+          </div>
+
+          <div className="flex justify-between items-center">
+             <div className="bg-white p-2 rounded-lg border border-gray-200 flex items-center w-64 shadow-sm">
                 <Search className="text-gray-400 mr-2" size={18} />
                 <input 
                     type="text" 
@@ -91,7 +138,7 @@ const Freight = () => {
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
-            </div>
+             </div>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -105,7 +152,7 @@ const Freight = () => {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                       {filteredProducts.length === 0 ? (
-                          <tr><td colSpan={3} className="px-6 py-12 text-center text-gray-400">No products found.</td></tr>
+                          <tr><td colSpan={3} className="px-6 py-12 text-center text-gray-400">No products found in this catalog.</td></tr>
                       ) : (
                           filteredProducts.map(product => (
                               <tr key={product.id} className="hover:bg-gray-50 transition-colors">
@@ -177,7 +224,7 @@ const Freight = () => {
               <AlertCircle size={20} className="mr-2 flex-shrink-0 mt-0.5" />
               <p>
                   <strong>Note:</strong> Changing a freight charge here will update the unit cost for this product in the catalog. 
-                  It will also automatically recalculate the Total Freight amount for all active orders that contain this item. 
+                  It will also automatically recalculate the Total Freight amount for all currently active running orders. 
                   Confirmed or Delivered orders are not affected.
               </p>
           </div>

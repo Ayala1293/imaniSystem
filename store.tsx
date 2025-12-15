@@ -13,6 +13,7 @@ interface AppContextType extends AppState {
   updateProduct: (product: Product) => void;
   deleteProduct: (productId: string) => void;
   addClient: (client: Client) => void;
+  updateClient: (client: Client) => void;
   addOrder: (order: Order) => void;
   updateOrder: (order: Order) => void;
   addPayment: (payment: PaymentTransaction) => void;
@@ -28,6 +29,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [clients, setClients] = useState<Client[]>(INITIAL_CLIENTS);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [payments, setPayments] = useState<PaymentTransaction[]>(INITIAL_PAYMENTS);
+
+  // Navigation State
+  const [currentView, setCurrentView] = useState('orders');
+  const [pendingOrderClientId, setPendingOrderClientId] = useState<string | null>(null);
 
   // Load user from session if available
   useEffect(() => {
@@ -80,6 +85,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setClients(prev => [...prev, client]);
   };
 
+  const updateClient = (client: Client) => {
+      setClients(prev => prev.map(c => c.id === client.id ? client : c));
+  };
+
   const addOrder = (order: Order) => {
     setOrders(prev => [...prev, order]);
   };
@@ -104,20 +113,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return prevOrders.map(order => {
                 if (order.clientId === matchedClientId && !order.isLocked && order.status !== 'DELIVERED') {
                     // Update this order
-                    const newTotalPaid = order.totalFobPaid + payment.amount;
-                    const orderTotalCost = order.items.reduce((sum, i) => sum + i.fobTotal, 0);
+                    const fobCost = order.items.reduce((sum, i) => sum + i.fobTotal, 0);
+                    const freightCost = order.items.reduce((sum, i) => sum + i.freightTotal, 0);
                     
-                    let newStatus: 'UNPAID' | 'PARTIAL' | 'PAID' = 'PARTIAL';
-                    if (newTotalPaid >= orderTotalCost && orderTotalCost > 0) {
-                        newStatus = 'PAID';
-                    } else if (newTotalPaid === 0) {
-                        newStatus = 'UNPAID';
+                    let paymentRemaining = payment.amount;
+                    
+                    // 1. Pay FOB First
+                    let newTotalFobPaid = order.totalFobPaid;
+                    if (newTotalFobPaid < fobCost) {
+                        const neededForFob = fobCost - newTotalFobPaid;
+                        const contribution = Math.min(paymentRemaining, neededForFob);
+                        newTotalFobPaid += contribution;
+                        paymentRemaining -= contribution;
                     }
+
+                    // 2. Pay Freight Second (if FOB is cleared or money left)
+                    let newTotalFreightPaid = order.totalFreightPaid;
+                    if (paymentRemaining > 0 && newTotalFobPaid >= fobCost) {
+                        newTotalFreightPaid += paymentRemaining;
+                    }
+
+                    // Determine Statuses
+                    let newFobStatus: 'UNPAID' | 'PARTIAL' | 'PAID' = 'PARTIAL';
+                    if (newTotalFobPaid >= fobCost && fobCost > 0) newFobStatus = 'PAID';
+                    else if (newTotalFobPaid === 0) newFobStatus = 'UNPAID';
+
+                    let newFreightStatus: 'UNPAID' | 'PARTIAL' | 'PAID' = 'PARTIAL';
+                    if (newTotalFreightPaid >= freightCost && freightCost > 0) newFreightStatus = 'PAID';
+                    else if (newTotalFreightPaid === 0) newFreightStatus = 'UNPAID';
 
                     return {
                         ...order,
-                        totalFobPaid: newTotalPaid,
-                        fobPaymentStatus: newStatus
+                        totalFobPaid: newTotalFobPaid,
+                        totalFreightPaid: newTotalFreightPaid,
+                        fobPaymentStatus: newFobStatus,
+                        freightPaymentStatus: newFreightStatus
                     };
                 }
                 return order;
@@ -143,9 +173,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updateProduct,
       deleteProduct,
       addClient,
+      updateClient,
       addOrder,
       updateOrder,
-      addPayment
+      addPayment,
+      currentView,
+      setCurrentView,
+      pendingOrderClientId,
+      setPendingOrderClientId
     }}>
       {children}
     </AppContext.Provider>

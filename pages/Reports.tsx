@@ -1,172 +1,316 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '../store';
-import { Download, Package } from 'lucide-react';
+import { Download, Package, FolderOpen, ArrowLeft, Users, FileText } from 'lucide-react';
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Product } from '../types';
 
 const Reports = () => {
-  const { orders, products } = useAppStore();
+  const { orders, products, catalogs, clients } = useAppStore();
+  const [activeCatalogId, setActiveCatalogId] = useState<string | null>(null);
 
-  // --- Consolidated Summary Logic ---
+  const activeCatalog = catalogs.find(c => c.id === activeCatalogId);
 
+  // --- Logic Helpers ---
+
+  // Filter orders related to the active catalog
+  const getCatalogOrders = () => {
+      if (!activeCatalogId) return [];
+      return orders.filter(order => {
+          // Check if order has items belonging to this catalog
+          return order.items.some(item => {
+              const product = products.find(p => p.id === item.productId);
+              return product?.catalogId === activeCatalogId;
+          });
+      });
+  };
+
+  // 1. Consolidated Summary Logic (Used for preview)
   const getConsolidatedSummary = () => {
-      const summary = new Map<string, { product: Product, variants: Map<string, number> }>();
+      const summary = new Map<string, { product: Product, totalQty: number }>();
+      const relevantOrders = getCatalogOrders();
 
-      orders.forEach(order => {
+      relevantOrders.forEach(order => {
           order.items.forEach(item => {
               const product = products.find(p => p.id === item.productId);
-              if (!product) return;
+              if (!product || product.catalogId !== activeCatalogId) return;
 
               if (!summary.has(product.id)) {
-                  summary.set(product.id, { product, variants: new Map() });
+                  summary.set(product.id, { product, totalQty: 0 });
               }
-
-              // Create a consistent key for variants (e.g. "Size: Small / Color: White")
-              // Sorting attributes by key ensures "Size, Color" and "Color, Size" result in same variant key
-              const attributes = [...item.selectedAttributes].sort((a, b) => a.key.localeCompare(b.key));
-              
-              const variantKey = attributes.length > 0 
-                  ? attributes.map(a => a.value).join(' / ') 
-                  : 'Standard';
-              
-              const currentQty = summary.get(product.id)!.variants.get(variantKey) || 0;
-              summary.get(product.id)!.variants.set(variantKey, currentQty + item.quantity);
+              summary.get(product.id)!.totalQty += item.quantity;
           });
       });
       return Array.from(summary.values());
   };
 
-  const consolidatedData = getConsolidatedSummary();
+  // 2. Client Order List Logic
+  const getClientOrderList = () => {
+      const relevantOrders = getCatalogOrders();
+      const clientData: { clientName: string, phone: string, items: string[] }[] = [];
 
-  const generateConsolidatedPDF = () => {
+      relevantOrders.forEach(order => {
+          const client = clients.find(c => c.id === order.clientId);
+          if (!client) return;
+
+          const itemsForThisCatalog: string[] = [];
+          
+          order.items.forEach(item => {
+              const product = products.find(p => p.id === item.productId);
+              if (!product || product.catalogId !== activeCatalogId) return;
+
+              const attrs = item.selectedAttributes.map(a => a.value).join('-');
+              const attrStr = attrs ? ` (${attrs})` : '';
+              itemsForThisCatalog.push(`${item.quantity} x ${product.name}${attrStr}`);
+          });
+
+          if (itemsForThisCatalog.length > 0) {
+              clientData.push({
+                  clientName: client.name,
+                  phone: client.phone,
+                  items: itemsForThisCatalog
+              });
+          }
+      });
+      
+      // Sort by Client Name
+      return clientData.sort((a, b) => a.clientName.localeCompare(b.clientName));
+  };
+
+  // --- PDF Generators ---
+
+  const generateDetailedProductPDF = () => {
     const doc = new jsPDF();
-    
-    // Report Header
+    const productsInCatalog = products.filter(p => p.catalogId === activeCatalogId);
+
+    // Header
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    doc.text("MONTHLY ORDER SUMMARY", 105, 15, { align: "center" });
-    doc.line(14, 18, 196, 18); // Horizontal line
+    doc.text(`PRODUCT DISTRIBUTION REPORT: ${activeCatalog?.name}`, 105, 15, { align: "center" });
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 105, 20, { align: "center" });
+    doc.line(14, 22, 196, 22);
 
-    let yPos = 25;
+    let yPos = 30;
 
-    consolidatedData.forEach((item, index) => {
+    if (productsInCatalog.length === 0) {
+        doc.text("No products found in this catalog.", 14, 30);
+    }
+
+    productsInCatalog.forEach((product, index) => {
+        // Collect orders for this product
+        const productOrders = getCatalogOrders().flatMap(order => {
+            const item = order.items.find(i => i.productId === product.id);
+            if (!item) return [];
+            
+            const client = clients.find(c => c.id === order.clientId);
+            const variantStr = item.selectedAttributes.map(a => `${a.key}:${a.value}`).join(', ') || 'Standard';
+
+            return [{
+                clientName: client?.name || 'Unknown',
+                phone: client?.phone || '-',
+                variant: variantStr,
+                quantity: item.quantity
+            }];
+        });
+
+        if (productOrders.length === 0) return; // Skip products with no orders
+
         // Check page break
-        if (yPos > 260) {
+        if (yPos > 250) {
             doc.addPage();
             yPos = 20;
         }
 
-        // Product Title
+        // Product Header
         doc.setFontSize(12);
         doc.setFont("helvetica", "bold");
-        doc.text(`${index + 1}: ${item.product.name}`, 14, yPos);
+        doc.setFillColor(230, 230, 230);
+        doc.rect(14, yPos - 5, 182, 8, 'F');
+        doc.text(`${index + 1}. ${product.name}`, 16, yPos);
         yPos += 5;
 
-        // Prepare Table Data
-        const variants = Array.from(item.variants.entries());
-        const bodyData = variants.map(([variant, qty]) => [variant, qty.toString()]);
-        const totalQty = variants.reduce((acc, curr) => acc + curr[1], 0);
+        // Table Data
+        const tableBody = productOrders.map(po => [
+            po.clientName,
+            po.phone,
+            po.variant,
+            po.quantity.toString()
+        ]);
+        
+        const totalQty = productOrders.reduce((sum, po) => sum + po.quantity, 0);
 
         autoTable(doc, {
             startY: yPos,
-            head: [['Variant / Type', 'Quantity']],
-            body: bodyData,
-            theme: 'plain', 
-            styles: { 
-                fontSize: 10,
-                cellPadding: 1,
-                lineColor: [200, 200, 200],
-                lineWidth: 0.1
-            },
-            headStyles: { 
-                fillColor: [240, 240, 240], 
-                textColor: [0, 0, 0], 
-                fontStyle: 'bold',
-                halign: 'left'
-            },
-            columnStyles: {
-                0: { cellWidth: 100 },
-                1: { cellWidth: 40, fontStyle: 'bold' }
+            head: [['Client Name', 'Phone Number', 'Variables / Option', 'Qty']],
+            body: tableBody,
+            theme: 'grid',
+            styles: { fontSize: 9, cellPadding: 1.5, lineColor: [200, 200, 200] },
+            headStyles: { fillColor: [60, 60, 60], textColor: [255, 255, 255], fontStyle: 'bold' },
+            columnStyles: { 
+                0: { cellWidth: 50 }, 
+                1: { cellWidth: 40 }, 
+                2: { cellWidth: 'auto' }, 
+                3: { cellWidth: 20, halign: 'center', fontStyle: 'bold' } 
             },
             margin: { left: 14 },
-            foot: [['TOTAL', totalQty.toString()]],
-            footStyles: {
-                fillColor: [255, 255, 255],
-                textColor: [0, 0, 0],
-                fontStyle: 'bold',
-                lineColor: [0, 0, 0],
-                lineWidth: { top: 0.1 }
-            }
+            foot: [['', '', 'TOTAL UNITS', totalQty.toString()]],
+            footStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold' }
         });
 
         // @ts-ignore
         yPos = doc.lastAutoTable.finalY + 10;
     });
 
-    doc.save("Monthly_Consolidated_Order_Summary.pdf");
+    doc.save(`${activeCatalog?.name.replace(/\s/g, '_')}_Detailed_Distribution.pdf`);
   };
+
+  const generateClientListPDF = () => {
+      const data = getClientOrderList();
+      const doc = new jsPDF();
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text(`CLIENT ORDERS: ${activeCatalog?.name}`, 105, 15, { align: "center" });
+      doc.line(14, 22, 196, 22);
+
+      const tableBody = data.map(c => [
+          c.clientName,
+          c.phone,
+          c.items.join('\n')
+      ]);
+
+      autoTable(doc, {
+          startY: 30,
+          head: [['Client Name', 'Phone', 'Ordered Items']],
+          body: tableBody,
+          styles: { fontSize: 10, cellPadding: 3, overflow: 'linebreak' },
+          headStyles: { fillColor: [44, 62, 80], textColor: [255, 255, 255], fontStyle: 'bold' },
+          columnStyles: { 2: { cellWidth: 100 } }
+      });
+
+      doc.save(`${activeCatalog?.name.replace(/\s/g, '_')}_Clients.pdf`);
+  };
+
+  // --- Views ---
+
+  if (!activeCatalogId) {
+      return (
+          <div className="space-y-6">
+              <div>
+                  <h2 className="text-3xl font-bold text-gray-800">Reports & Analytics</h2>
+                  <p className="text-gray-500">Select a monthly catalog to view specific reports and export data.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {catalogs.map(catalog => (
+                      <div 
+                          key={catalog.id} 
+                          onClick={() => setActiveCatalogId(catalog.id)}
+                          className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group"
+                      >
+                          <div className="flex justify-between items-start mb-4">
+                              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg group-hover:bg-indigo-100 transition-colors">
+                                  <FileText size={24} />
+                              </div>
+                              <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded">
+                                  {new Date(catalog.closingDate).toLocaleDateString()}
+                              </span>
+                          </div>
+                          <h3 className="text-xl font-bold text-gray-800 mb-1">{catalog.name}</h3>
+                          <p className="text-sm text-gray-500">
+                             {/* Mock Stat */}
+                             Click to view export options
+                          </p>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      );
+  }
+
+  const consolidatedData = getConsolidatedSummary();
+  const clientListData = getClientOrderList();
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)]">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-bold text-gray-800">Reports & Analytics</h2>
-      </div>
+        <div className="flex items-center gap-4 mb-6">
+            <button 
+                onClick={() => setActiveCatalogId(null)}
+                className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+            >
+                <ArrowLeft size={20} className="text-gray-600"/>
+            </button>
+            <div>
+                <h2 className="text-3xl font-bold text-gray-800">Reports: {activeCatalog?.name}</h2>
+                <p className="text-sm text-gray-500">Generate PDF exports for this month.</p>
+            </div>
+        </div>
 
-      {/* New Consolidated Summary Section - Taking Full Height */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex-1 flex flex-col min-h-0">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 flex-shrink-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            {/* Report Card 1 */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-between">
                 <div>
-                        <h3 className="text-xl font-bold text-gray-800 flex items-center">
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center mb-2">
                         <Package className="mr-2 text-blue-600" />
-                        Consolidated Order Summary
-                        </h3>
-                        <p className="text-gray-500 text-sm mt-1">
-                        Aggregated totals by product and variant for the current period.
-                        </p>
+                        Detailed Product Distribution
+                    </h3>
+                    <p className="text-gray-500 text-sm mb-4">
+                        A detailed breakdown per item showing who ordered it, their phone number, and specific variables/options selected.
+                    </p>
                 </div>
                 <button 
-                    onClick={generateConsolidatedPDF} 
-                    className="flex items-center px-6 py-3 bg-slate-900 text-white rounded-lg hover:bg-black transition-all shadow-md font-medium"
+                    onClick={generateDetailedProductPDF} 
+                    className="w-full flex justify-center items-center px-4 py-3 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-all font-bold"
                 >
                     <Download size={18} className="mr-2" />
-                    Export Summary PDF
+                    Export Detailed Item PDF
                 </button>
             </div>
-            
-            {/* Visual Preview of Summary Grid */}
-            <div className="flex-1 overflow-y-auto p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+
+            {/* Report Card 2 */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-between">
+                <div>
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center mb-2">
+                        <Users className="mr-2 text-green-600" />
+                        Client Order List
+                    </h3>
+                    <p className="text-gray-500 text-sm mb-4">
+                        Detailed list of clients and exactly what they ordered. Includes phone numbers for contact.
+                    </p>
+                    <div className="text-xs font-bold bg-green-50 text-green-700 px-3 py-1 rounded w-fit mb-4">
+                        {clientListData.length} Clients Ordered
+                    </div>
+                </div>
+                <button 
+                    onClick={generateClientListPDF} 
+                    className="w-full flex justify-center items-center px-4 py-3 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-all font-bold"
+                >
+                    <Download size={18} className="mr-2" />
+                    Export Client List PDF
+                </button>
+            </div>
+        </div>
+        
+        {/* Preview Section */}
+        <div className="flex-1 bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col min-h-0">
+            <h3 className="font-bold text-gray-700 mb-4 border-b pb-2">Quick Preview (Total Quantities)</h3>
+            <div className="flex-1 overflow-y-auto">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {consolidatedData.length === 0 ? (
-                        <div className="col-span-full flex flex-col items-center justify-center py-20 text-gray-400">
-                            <Package size={64} className="mb-4 opacity-20" />
-                            <p className="text-lg">No active order data available for summary.</p>
-                        </div>
+                        <p className="text-gray-400 italic col-span-full text-center py-10">No orders found for this catalog.</p>
                     ) : (
                         consolidatedData.map((item, idx) => (
-                            <div key={item.product.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow break-inside-avoid">
-                                <h4 className="font-bold text-gray-800 mb-3 pb-2 border-b border-gray-100 text-sm truncate" title={item.product.name}>
-                                    {idx + 1}. {item.product.name}
-                                </h4>
-                                <div className="space-y-1">
-                                    {Array.from(item.variants.entries()).map(([variant, qty]) => (
-                                        <div key={variant} className="flex justify-between text-xs items-center p-1 hover:bg-gray-50 rounded">
-                                            <span className="text-gray-600 font-medium truncate w-2/3" title={variant}>{variant}</span>
-                                            <span className="font-bold text-gray-900 bg-gray-100 px-2 py-0.5 rounded-full">{qty}</span>
-                                        </div>
-                                    ))}
-                                    <div className="mt-3 pt-2 border-t border-gray-100 flex justify-between text-xs font-bold text-blue-600">
-                                        <span>Total</span>
-                                        <span>{Array.from(item.variants.values()).reduce((a, b) => a + b, 0)}</span>
-                                    </div>
-                                </div>
+                            <div key={item.product.id} className="bg-gray-50 border border-gray-200 rounded p-3 text-sm flex justify-between items-center">
+                                <span className="font-bold text-gray-900 truncate flex-1">{idx + 1}. {item.product.name}</span>
+                                <span className="font-bold bg-white border border-gray-300 px-2 py-1 rounded text-xs">{item.totalQty} Units</span>
                             </div>
                         ))
                     )}
                 </div>
             </div>
-      </div>
+        </div>
     </div>
   );
 };
