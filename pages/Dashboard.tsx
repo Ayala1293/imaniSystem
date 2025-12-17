@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { useAppStore } from '../store';
 import { DollarSign, Package, ShoppingBag, Truck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
@@ -11,7 +11,7 @@ const Dashboard = () => {
   const activeMonthRevenueFOB = orders.reduce((sum, order) => {
     return sum + order.items.reduce((isum, item) => isum + item.fobTotal, 0);
   }, 0);
-  const totalPaymentsReceived = payments.reduce((sum, p) => sum + p.amount, 0);
+  
   const pendingShipments = orders.filter(o => o.status === 'CONFIRMED' || o.status === 'SHIPPED').length;
 
   // Chart Data Preparation

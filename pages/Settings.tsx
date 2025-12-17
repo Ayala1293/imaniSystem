@@ -1,28 +1,26 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '../store';
-import { Save, Upload, Smartphone, CreditCard, Plus, Trash2, Download, Database, CheckCircle, AlertTriangle, ShieldAlert, Clock, User, Zap } from 'lucide-react';
-import { INITIAL_CATALOGS, INITIAL_PRODUCTS, INITIAL_CLIENTS, INITIAL_ORDERS, INITIAL_PAYMENTS, INITIAL_SHOP_SETTINGS } from '../constants';
+import { Save, Upload, Smartphone, CreditCard, Plus, Trash2, Users, UserPlus } from 'lucide-react';
+import { UserRole } from '../types';
 
 const Settings = () => {
   const { 
     shopSettings, 
-    updateShopSettings, 
-    catalogs, 
-    products, 
-    clients, 
-    orders, 
-    payments,
-    importData,
-    authLogs,
-    currentUser,
-    isOffline
+    updateShopSettings,
+    users,
+    registerUser,
+    deleteUser,
+    currentUser
   } = useAppStore();
   
   const [formData, setFormData] = useState(shopSettings);
   const [newPhone, setNewPhone] = useState('');
-  const [importStatus, setImportStatus] = useState<'IDLE' | 'SUCCESS' | 'ERROR'>('IDLE');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // User Management State
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'ORDER_ENTRY' as UserRole });
+  const [userError, setUserError] = useState('');
 
   const handleSave = () => {
       updateShopSettings(formData);
@@ -53,148 +51,41 @@ const Settings = () => {
       setFormData(prev => ({...prev, phoneNumbers: prev.phoneNumbers.filter((_, i) => i !== index)}));
   };
 
-  const handleBackup = () => {
-      const backupData = {
-          timestamp: new Date().toISOString(),
-          shopName: shopSettings.shopName,
-          catalogs,
-          products,
-          clients,
-          orders,
-          payments,
-          shopSettings
-      };
+  const handleAddUser = async () => {
+      setUserError('');
+      if (!newUser.name || !newUser.username || !newUser.password) {
+          setUserError("All fields required");
+          return;
+      }
+      if (newUser.password.length < 6) {
+          setUserError("Password too short (min 6)");
+          return;
+      }
 
-      const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${shopSettings.shopName.replace(/\s+/g, '_')}_Backup_${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      const res = await registerUser(newUser.name, newUser.username, newUser.password, newUser.role);
+      if (res.success) {
+          setIsAddingUser(false);
+          setNewUser({ name: '', username: '', password: '', role: 'ORDER_ENTRY' });
+          alert("User added!");
+      } else {
+          setUserError(res.message);
+      }
   };
 
-  const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-          const content = event.target?.result as string;
-          const success = await importData(content);
-          setImportStatus(success ? 'SUCCESS' : 'ERROR');
-          setTimeout(() => setImportStatus('IDLE'), 3000);
-      };
-      reader.readAsText(file);
-      // Reset input
-      if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const handleLoadDemoData = async () => {
-      if (!window.confirm("WARNING: This will ERASE all current data and replace it with sample data. Continue?")) return;
-      
-      const demoData = {
-          catalogs: INITIAL_CATALOGS,
-          products: INITIAL_PRODUCTS,
-          clients: INITIAL_CLIENTS,
-          orders: INITIAL_ORDERS,
-          payments: INITIAL_PAYMENTS,
-          shopSettings: INITIAL_SHOP_SETTINGS
-      };
-      
-      const success = await importData(demoData);
-      if (success) alert("Demo data loaded successfully! Your database is now populated.");
-      else alert("Failed to load demo data.");
+  const handleDeleteUser = async (id: string) => {
+      if (id === currentUser?.id) {
+          alert("Cannot delete yourself.");
+          return;
+      }
+      if (window.confirm("Are you sure you want to delete this user?")) {
+          await deleteUser(id);
+      }
   };
 
   return (
     <div className="space-y-8 pb-10">
-      <div><h2 className="text-3xl font-bold text-gray-800">Shop Configuration</h2><p className="text-gray-500">Manage details and data backups.</p></div>
+      <div><h2 className="text-3xl font-bold text-gray-800">Shop Configuration</h2><p className="text-gray-500">Manage details.</p></div>
       
-      {/* Backup & Recovery Section */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><Database size={20} className="mr-2 text-blue-600"/> Data Management</h3>
-          <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 mb-6">
-              <div className="flex items-start gap-3">
-                  <div className="p-2 bg-white rounded-full text-blue-600 shadow-sm"><Download size={20}/></div>
-                  <div>
-                      <h4 className="font-bold text-blue-900">Backup & Restore</h4>
-                      <p className="text-sm text-blue-700 mt-1">
-                          Since this system runs on your desktop without a cloud server, use this feature to save your data permanently or transfer it to another computer.
-                      </p>
-                  </div>
-              </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <button onClick={handleBackup} className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 border-dashed rounded-xl hover:bg-gray-50 hover:border-blue-300 hover:shadow-md transition-all group">
-                  <Download size={32} className="mb-3 text-gray-400 group-hover:text-blue-500"/>
-                  <span className="font-bold text-gray-700 group-hover:text-blue-700">Download Backup File</span>
-                  <span className="text-xs text-gray-400 mt-1">Save all orders, products, and clients</span>
-              </button>
-
-              <div className="relative">
-                  <input type="file" accept=".json" ref={fileInputRef} onChange={handleRestore} className="hidden" />
-                  <button onClick={() => fileInputRef.current?.click()} className="w-full h-full flex flex-col items-center justify-center p-6 border-2 border-gray-200 border-dashed rounded-xl hover:bg-gray-50 hover:border-green-300 hover:shadow-md transition-all group">
-                      {importStatus === 'IDLE' && <><Upload size={32} className="mb-3 text-gray-400 group-hover:text-green-500"/><span className="font-bold text-gray-700 group-hover:text-green-700">Restore from Backup</span><span className="text-xs text-gray-400 mt-1">Upload a previously saved .json file</span></>}
-                      {importStatus === 'SUCCESS' && <div className="animate-fade-in text-center"><CheckCircle size={40} className="text-green-500 mx-auto mb-2"/><span className="font-bold text-green-600">Restore Successful!</span></div>}
-                      {importStatus === 'ERROR' && <div className="animate-fade-in text-center"><AlertTriangle size={40} className="text-red-500 mx-auto mb-2"/><span className="font-bold text-red-600">Invalid File</span></div>}
-                  </button>
-              </div>
-
-              {!isOffline && currentUser?.role === 'ADMIN' && (
-                   <button onClick={handleLoadDemoData} className="flex flex-col items-center justify-center p-6 border-2 border-gray-200 border-dashed rounded-xl hover:bg-orange-50 hover:border-orange-300 hover:shadow-md transition-all group">
-                        <Zap size={32} className="mb-3 text-gray-400 group-hover:text-orange-500"/>
-                        <span className="font-bold text-gray-700 group-hover:text-orange-700">Load Demo Data</span>
-                        <span className="text-xs text-gray-400 mt-1">Populate empty DB with samples</span>
-                   </button>
-              )}
-          </div>
-      </div>
-
-      {/* Security Audit Log Section - Admin Only */}
-      {currentUser?.role === 'ADMIN' && (
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-              <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><ShieldAlert size={20} className="mr-2 text-purple-600"/> Security Audit Logs</h3>
-              <div className="overflow-x-auto max-h-96 border rounded-lg">
-                  <table className="w-full text-sm">
-                      <thead className="bg-gray-50 sticky top-0">
-                          <tr className="border-b">
-                              <th className="px-4 py-3 text-left font-medium text-gray-600">Time</th>
-                              <th className="px-4 py-3 text-left font-medium text-gray-600">User / Email</th>
-                              <th className="px-4 py-3 text-left font-medium text-gray-600">Action</th>
-                              <th className="px-4 py-3 text-left font-medium text-gray-600">Details</th>
-                          </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                          {authLogs.slice().reverse().map(log => (
-                              <tr key={log.id} className="hover:bg-gray-50">
-                                  <td className="px-4 py-2 text-gray-500 flex items-center gap-2">
-                                      <Clock size={12} /> {new Date(log.timestamp).toLocaleString()}
-                                  </td>
-                                  <td className="px-4 py-2 text-gray-800 font-medium">
-                                      <div className="flex items-center gap-2"><User size={12}/> {log.email}</div>
-                                  </td>
-                                  <td className="px-4 py-2">
-                                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                                          log.action === 'LOGIN_SUCCESS' ? 'bg-green-100 text-green-700' :
-                                          log.action === 'LOGIN_FAILED' ? 'bg-red-100 text-red-700' :
-                                          'bg-blue-100 text-blue-700'
-                                      }`}>
-                                          {log.action.replace('_', ' ')}
-                                      </span>
-                                  </td>
-                                  <td className="px-4 py-2 text-gray-600 italic">{log.details || '-'}</td>
-                              </tr>
-                          ))}
-                          {authLogs.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-gray-500">No logs recorded yet.</td></tr>}
-                      </tbody>
-                  </table>
-              </div>
-          </div>
-      )}
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
               <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><Smartphone size={20} className="mr-2 theme-text"/> General Information</h3>
@@ -234,12 +125,56 @@ const Settings = () => {
                   </div>
               </div>
           </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-              <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><CreditCard size={20} className="mr-2 text-green-600"/> Payment Accounts</h3>
-              <div className="space-y-6">
-                  <div className="p-4 bg-gray-50 rounded-lg border"><h4 className="text-sm font-bold text-gray-700 uppercase mb-3">FOB Payments</h4><div className="grid grid-cols-2 gap-4"><div><label className="block text-xs text-gray-500 mb-1">Paybill</label><input className="w-full p-2 border rounded text-gray-900" value={formData.fobPaybill} onChange={e => setFormData({...formData, fobPaybill: e.target.value})}/></div><div><label className="block text-xs text-gray-500 mb-1">Account Number</label><input className="w-full p-2 border rounded text-gray-900" value={formData.fobAccountNumber} onChange={e => setFormData({...formData, fobAccountNumber: e.target.value})}/></div></div></div>
-                  <div className="p-4 bg-gray-50 rounded-lg border"><h4 className="text-sm font-bold text-gray-700 uppercase mb-3">Freight Payments</h4><div className="grid grid-cols-2 gap-4"><div><label className="block text-xs text-gray-500 mb-1">Paybill</label><input className="w-full p-2 border rounded text-gray-900" value={formData.freightPaybill} onChange={e => setFormData({...formData, freightPaybill: e.target.value})}/></div><div><label className="block text-xs text-gray-500 mb-1">Account Number</label><input className="w-full p-2 border rounded text-gray-900" value={formData.freightAccountNumber} onChange={e => setFormData({...formData, freightAccountNumber: e.target.value})}/></div></div></div>
-              </div>
+          <div className="space-y-8">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><CreditCard size={20} className="mr-2 text-green-600"/> Payment Accounts</h3>
+                <div className="space-y-6">
+                    <div className="p-4 bg-gray-50 rounded-lg border"><h4 className="text-sm font-bold text-gray-700 uppercase mb-3">FOB Payments</h4><div className="grid grid-cols-2 gap-4"><div><label className="block text-xs text-gray-500 mb-1">Paybill</label><input className="w-full p-2 border rounded text-gray-900" value={formData.fobPaybill} onChange={e => setFormData({...formData, fobPaybill: e.target.value})}/></div><div><label className="block text-xs text-gray-500 mb-1">Account Number</label><input className="w-full p-2 border rounded text-gray-900" value={formData.fobAccountNumber} onChange={e => setFormData({...formData, fobAccountNumber: e.target.value})}/></div></div></div>
+                    <div className="p-4 bg-gray-50 rounded-lg border"><h4 className="text-sm font-bold text-gray-700 uppercase mb-3">Freight Payments</h4><div className="grid grid-cols-2 gap-4"><div><label className="block text-xs text-gray-500 mb-1">Paybill</label><input className="w-full p-2 border rounded text-gray-900" value={formData.freightPaybill} onChange={e => setFormData({...formData, freightPaybill: e.target.value})}/></div><div><label className="block text-xs text-gray-500 mb-1">Account Number</label><input className="w-full p-2 border rounded text-gray-900" value={formData.freightAccountNumber} onChange={e => setFormData({...formData, freightAccountNumber: e.target.value})}/></div></div></div>
+                </div>
+            </div>
+            
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-lg font-bold text-gray-800 flex items-center"><Users size={20} className="mr-2 text-blue-600"/> Team Management</h3>
+                     {!isAddingUser && <button onClick={() => setIsAddingUser(true)} className="flex items-center px-3 py-1.5 text-xs font-bold theme-bg rounded text-white"><UserPlus size={14} className="mr-1"/> Add Staff</button>}
+                </div>
+                
+                {isAddingUser && (
+                    <div className="bg-blue-50 p-4 rounded-lg mb-4 animate-fade-in border border-blue-100">
+                        <h4 className="font-bold text-gray-800 text-sm mb-3">Add New Team Member</h4>
+                        <div className="space-y-3">
+                            <input className="w-full p-2 text-sm border rounded" placeholder="Full Name" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})}/>
+                            <input className="w-full p-2 text-sm border rounded" placeholder="Username" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})}/>
+                            <div className="flex gap-2">
+                                <input className="flex-1 p-2 text-sm border rounded" type="password" placeholder="Password (min 6 chars)" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})}/>
+                                <select className="p-2 border rounded text-sm bg-white" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})}>
+                                    <option value="ORDER_ENTRY">Staff</option>
+                                    <option value="ADMIN">Admin</option>
+                                </select>
+                            </div>
+                            {userError && <p className="text-red-500 text-xs font-bold">{userError}</p>}
+                            <div className="flex justify-end gap-2 mt-2">
+                                <button onClick={() => setIsAddingUser(false)} className="px-3 py-1 text-xs font-bold text-gray-600">Cancel</button>
+                                <button onClick={handleAddUser} className="px-3 py-1 text-xs font-bold theme-bg text-white rounded">Create User</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="divide-y divide-gray-100">
+                    {users.map(u => (
+                        <div key={u.id} className="py-3 flex justify-between items-center">
+                            <div>
+                                <p className="font-bold text-sm text-gray-800">{u.name} {u.id === currentUser?.id && <span className="text-[10px] bg-green-100 text-green-700 px-1 rounded ml-1">(You)</span>}</p>
+                                <p className="text-xs text-gray-500">{u.username} • {u.role}</p>
+                            </div>
+                            {u.id !== currentUser?.id && <button onClick={() => handleDeleteUser(u.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>}
+                        </div>
+                    ))}
+                    {users.length === 0 && <p className="text-sm text-gray-400 italic">No users found.</p>}
+                </div>
+            </div>
           </div>
       </div>
       <div className="flex justify-end pt-6 border-t"><button onClick={handleSave} className="flex items-center px-8 py-3 theme-bg rounded-lg shadow-lg font-bold text-lg"><Save size={20} className="mr-2" /> Save Configuration</button></div>

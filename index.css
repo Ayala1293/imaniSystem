@@ -1,0 +1,86 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Base Styles */
+body { 
+  font-family: 'Inter', sans-serif; 
+  background-color: #f3f4f6; 
+}
+
+.font-serif-display { 
+  font-family: 'Playfair Display', serif; 
+}
+
+/* --- Dynamic Theme Utilities --- */
+:root {
+  /* Default Fallbacks */
+  --color-primary: #C49A46;
+  --color-secondary: #111111;
+  --color-accent: #DAA520;
+  --color-sidebar-text: #F3F4F6;
+  --color-card-border: #000000; /* Black Border */
+}
+
+/* Buttons & Backgrounds */
+.theme-bg { 
+  background-color: var(--color-primary) !important; 
+  color: white !important; 
+}
+.theme-bg:hover { 
+  filter: brightness(1.1); 
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.theme-bg-light { 
+  background-color: color-mix(in srgb, var(--color-primary), transparent 90%) !important; 
+}
+
+.theme-text { color: var(--color-primary) !important; }
+
+.theme-border { border-color: var(--color-primary) !important; }
+.theme-border-light { border-color: color-mix(in srgb, var(--color-primary), transparent 80%) !important; }
+
+.theme-ring:focus { --tw-ring-color: var(--color-primary) !important; }
+
+/* Card Glow Effect */
+.hover-glow {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  z-index: 1;
+  border: 1px solid var(--color-card-border) !important; /* Force black border */
+}
+.hover-glow:hover {
+  box-shadow: 0 0 25px var(--color-accent);
+  transform: translateY(-4px) scale(1.005);
+  z-index: 10;
+  border-color: var(--color-accent) !important; /* Gold border on hover */
+}
+
+/* Global Interactive Elements Fix */
+button { 
+  cursor: pointer; 
+  transition: all 0.2s ease-in-out; 
+}
+button:active { 
+  transform: scale(0.97); 
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Animations */
+.animate-fade-in { animation: fadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
+.animate-slide-in { animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* Custom scrollbar for desktop feel */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }

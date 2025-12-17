@@ -9,6 +9,26 @@ router.get('/', protect, async (req, res) => {
     res.json(products);
 });
 
+// @route   POST /api/products/:id/stock
+// @desc    Update stock levels (Allowed for Staff) - Changed from PATCH to POST for better compatibility
+router.post('/:id/stock', protect, async (req, res) => {
+    try {
+        const product = await Product.findById(req.params.id);
+        if (product) {
+            if (req.body.stockCounts) product.stockCounts = req.body.stockCounts;
+            if (req.body.stockSold) product.stockSold = req.body.stockSold;
+            if (req.body.stockStatus) product.stockStatus = req.body.stockStatus;
+            
+            const updatedProduct = await product.save();
+            res.json(updatedProduct);
+        } else {
+            res.status(404).json({ message: 'Product not found' });
+        }
+    } catch (error) {
+        res.status(400).json({ message: 'Error updating stock: ' + error.message });
+    }
+});
+
 router.post('/', protect, admin, async (req, res) => {
     try {
         const product = new Product(req.body);

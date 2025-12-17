@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppStore } from '../store';
-import { CreditCard, Calendar, ArrowLeft } from 'lucide-react';
+import { CreditCard, ArrowLeft } from 'lucide-react';
 
 const Payments = () => {
   const { payments, catalogs, orders, products } = useAppStore();

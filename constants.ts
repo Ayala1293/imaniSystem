@@ -2,8 +2,8 @@
 import { Product, Client, Order, User, PaymentTransaction, Catalog, ShopSettings } from './types';
 
 export const MOCK_USERS: User[] = [
-  { id: 'u1', name: 'System Admin', email: 'admin@shop.com', role: 'ADMIN' },
-  { id: 'u2', name: 'Sales Staff', email: 'sales@shop.com', role: 'ORDER_ENTRY' },
+  { id: 'u1', name: 'System Admin', username: 'admin', role: 'ADMIN' },
+  { id: 'u2', name: 'Sales Staff', username: 'sales', role: 'ORDER_ENTRY' },
 ];
 
 export const INITIAL_CATALOGS: Catalog[] = [

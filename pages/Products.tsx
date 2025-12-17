@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../store';
 import { Product, Catalog } from '../types';
-import { Plus, Search, Sparkles, Trash2, Edit, Upload, FolderOpen, Calendar, ArrowLeft, History, Archive, Settings, Lock, CheckCircle, Info, Edit2, ListPlus, Box, Unlock, ArrowRight } from 'lucide-react';
+import { Plus, Search, Sparkles, Trash2, Edit, Upload, FolderOpen, Calendar, ArrowLeft, History, Settings, Lock, Edit2, ListPlus, Unlock } from 'lucide-react';
 import { generateProductDescription } from '../services/geminiService';
 
 const Products = () => {
@@ -135,8 +135,17 @@ const Products = () => {
 
   const handleSaveCatalog = () => {
     if (!catalogFormData.name || !catalogFormData.closingDate) return;
-    if (catalogFormData.id) updateCatalog(catalogFormData as Catalog);
-    else addCatalog({ id: `cat-${Date.now()}`, name: catalogFormData.name, closingDate: catalogFormData.closingDate, status: 'OPEN', createdAt: new Date().toISOString() });
+    if (catalogFormData.id) {
+        updateCatalog(catalogFormData as Catalog);
+    } else {
+        // Do NOT send 'id'. Let DB generate it.
+        addCatalog({ 
+            name: catalogFormData.name, 
+            closingDate: catalogFormData.closingDate, 
+            status: 'OPEN', 
+            createdAt: new Date().toISOString() 
+        });
+    }
     setIsCatalogModalOpen(false);
   };
 
@@ -186,14 +195,33 @@ const Products = () => {
             }
         });
     } else {
-        addProduct({ ...productFormData as Product, id: Date.now().toString(), catalogId: activeCatalogId, imageUrl: finalImage, stockCounts: {} });
+        // Do NOT send manual ID for products either if we can avoid it, but for now products might be less strict. 
+        // Best practice: remove id.
+        addProduct({ 
+            ...productFormData as Product, 
+            catalogId: activeCatalogId, 
+            imageUrl: finalImage, 
+            stockCounts: {} 
+        });
     }
     setIsProductModalOpen(false);
   };
 
   const handleImportProduct = (historicalProduct: Product) => {
       if (!activeCatalogId) return;
-      addProduct({ ...historicalProduct, id: `imp-${Date.now()}`, catalogId: activeCatalogId, stockCounts: {} });
+      
+      // Explicitly remove system fields that might cause "Duplicate ID" errors on the backend
+      const { id, ...rest } = historicalProduct;
+      // @ts-ignore - _id might exist in the runtime object even if not in type
+      const { _id, createdAt, updatedAt, __v, ...cleanProduct } = rest as any;
+
+      addProduct({ 
+          ...cleanProduct, 
+          catalogId: activeCatalogId, 
+          stockCounts: {}, 
+          stockSold: {},
+          stockStatus: 'PENDING'
+      } as Product);
       setIsImportModalOpen(false);
   };
 

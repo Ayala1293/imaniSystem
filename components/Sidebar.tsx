@@ -1,5 +1,4 @@
 
-import React from 'react';
 import { 
   Package, 
   ShoppingCart, 
@@ -10,7 +9,6 @@ import {
   Container,
   ClipboardCheck,
   Settings,
-  LayoutDashboard,
   WifiOff
 } from 'lucide-react';
 import { useAppStore } from '../store';
@@ -19,7 +17,6 @@ const Sidebar = () => {
   const { currentUser, logout, currentView, setCurrentView, shopSettings, isOffline } = useAppStore();
 
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'orders', label: 'Running Orders', icon: ShoppingCart },
     { id: 'payments', label: 'Payments (M-Pesa)', icon: CreditCard },
     { id: 'clients', label: 'Clients', icon: Users },

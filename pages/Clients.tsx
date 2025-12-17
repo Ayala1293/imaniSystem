@@ -1,23 +1,24 @@
 
 import React, { useState, useRef } from 'react';
 import { useAppStore } from '../store';
-import { Search, UserPlus, Phone, FileSpreadsheet, UploadCloud, Edit, ShoppingCart, X } from 'lucide-react';
+import { Search, UserPlus, Phone, FileSpreadsheet, Edit, ShoppingCart, Loader } from 'lucide-react';
 import { Client } from '../types';
 import * as XLSX from 'xlsx';
 
 const Clients = () => {
-  const { clients, addClient, updateClient, currentUser, setCurrentView, setPendingOrderClientId } = useAppStore();
+  const { clients, addClient, addClientsBulk, updateClient, currentUser, setCurrentView, setPendingOrderClientId } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [clientFormData, setClientFormData] = useState<Partial<Client>>({ name: '', phone: '' });
   const [isEditing, setIsEditing] = useState(false);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSaveClient = () => {
     if (clientFormData.name && clientFormData.phone) {
         if (isEditing && clientFormData.id) updateClient(clientFormData as Client);
-        else addClient({ id: Date.now().toString(), name: clientFormData.name, phone: clientFormData.phone, email: '' });
+        else addClient({ name: clientFormData.name, phone: clientFormData.phone, email: '' } as Client);
         setClientFormData({ name: '', phone: '' });
         setShowAddForm(false);
         setIsEditing(false);
@@ -41,20 +42,47 @@ const Clients = () => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    setIsImporting(true);
     const reader = new FileReader();
-    reader.onload = (evt) => {
-        const wb = XLSX.read(evt.target?.result, { type: 'binary' });
-        const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
-        let addedCount = 0;
-        data.forEach((row: any) => {
-            const name = row['Name'] || row['name'] || row['Client Name'];
-            const phone = row['Phone'] || row['phone'] || row['Phone Number'];
-            if (name && phone && !clients.some(c => c.phone === String(phone))) {
-                addClient({ id: `import-${Date.now()}-${Math.random()}`, name: String(name), phone: String(phone), email: '' });
-                addedCount++;
+    reader.onload = async (evt) => {
+        try {
+            const wb = XLSX.read(evt.target?.result, { type: 'binary' });
+            const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+            
+            const newClients: Partial<Client>[] = [];
+            const existingPhones = new Set(clients.map(c => c.phone));
+
+            data.forEach((row: any) => {
+                const name = row['Name'] || row['name'] || row['Client Name'];
+                const phone = row['Phone'] || row['phone'] || row['Phone Number'];
+                
+                // Clean phone number (basic)
+                const phoneStr = String(phone).trim();
+
+                if (name && phoneStr && !existingPhones.has(phoneStr)) {
+                    newClients.push({
+                        name: String(name),
+                        phone: phoneStr,
+                        email: ''
+                    });
+                    existingPhones.add(phoneStr); // Prevent duplicates within the file itself
+                }
+            });
+
+            if (newClients.length > 0) {
+                const count = await addClientsBulk(newClients);
+                alert(`Imported ${count} new clients successfully.`);
+            } else {
+                alert("No new clients found in file (or all were duplicates).");
             }
-        });
-        alert(`Imported ${addedCount} clients.`);
+
+        } catch (err) {
+            console.error(err);
+            alert("Failed to parse Excel file.");
+        } finally {
+            setIsImporting(false);
+        }
     };
     reader.readAsBinaryString(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -70,7 +98,10 @@ const Clients = () => {
                 {currentUser?.role === 'ADMIN' && (
                     <>
                         <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
-                        <button onClick={() => fileInputRef.current?.click()} className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm"><FileSpreadsheet size={18} className="mr-2" /> Import Excel</button>
+                        <button onClick={() => fileInputRef.current?.click()} disabled={isImporting} className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50">
+                            {isImporting ? <Loader className="animate-spin mr-2" size={18}/> : <FileSpreadsheet size={18} className="mr-2" />} 
+                            {isImporting ? 'Importing...' : 'Import Excel'}
+                        </button>
                     </>
                 )}
                 <button onClick={() => { setShowAddForm(!showAddForm); setIsEditing(false); setClientFormData({name: '', phone: ''}); }} className="flex items-center px-4 py-2 theme-bg rounded-lg shadow-md"><UserPlus size={18} className="mr-2" /> Add Client</button>

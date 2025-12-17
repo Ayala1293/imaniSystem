@@ -4,17 +4,17 @@ export type UserRole = 'ADMIN' | 'ORDER_ENTRY';
 export interface User {
   id: string;
   name: string;
-  email: string;
+  username: string; // Changed from email
   role: UserRole;
-  passwordHash?: string; // Optional only for legacy mock data, required in production
+  passwordHash?: string;
   resetToken?: string;
-  resetTokenExpiry?: string; // ISO Date
+  resetTokenExpiry?: string;
 }
 
 export interface AuthLog {
   id: string;
   timestamp: string;
-  email: string;
+  username: string; // Changed from email
   action: 'LOGIN_SUCCESS' | 'LOGIN_FAILED' | 'PASSWORD_CHANGE' | 'RESET_REQUEST';
   details?: string;
 }
@@ -26,15 +26,15 @@ export interface DynamicAttribute {
 
 export interface Catalog {
   id: string;
-  name: string; // e.g., "September Imports"
-  closingDate: string; // ISO Date, serves as payment deadline
+  name: string;
+  closingDate: string;
   status: 'OPEN' | 'CLOSED';
   createdAt: string;
 }
 
 export interface Product {
   id: string;
-  catalogId: string; // Link to specific monthly catalog
+  catalogId: string;
   name: string;
   description: string;
   imageUrl: string;
@@ -42,9 +42,9 @@ export interface Product {
   fobPrice: number;
   freightCharge: number;
   category: string;
-  stockStatus?: 'PENDING' | 'ARRIVED'; // General status
-  stockCounts?: Record<string, number>; // Granular stock: { "Color:Red": 45, "Color:Blue": 10 }
-  stockSold?: Record<string, number>; // Tracks extras that have been sold/removed
+  stockStatus?: 'PENDING' | 'ARRIVED';
+  stockCounts?: Record<string, number>;
+  stockSold?: Record<string, number>;
 }
 
 export interface Client {
@@ -63,48 +63,48 @@ export interface OrderItem {
   quantity: number;
   fobTotal: number;
   freightTotal: number;
-  selectedAttributes: DynamicAttribute[]; // e.g. which color they picked
+  selectedAttributes: DynamicAttribute[];
 }
 
 export interface Order {
   id: string;
   clientId: string;
   items: OrderItem[];
-  orderDate: string; // ISO Date
+  orderDate: string;
   status: OrderStatus;
   fobPaymentStatus: PaymentStatus;
   freightPaymentStatus: PaymentStatus;
   totalFobPaid: number;
   totalFreightPaid: number;
-  isLocked: boolean; // Locked after month closes
+  isLocked: boolean;
 }
 
 export interface PaymentTransaction {
-  id: string; // Internal ID
-  transactionCode: string; // M-Pesa Code
+  id: string;
+  transactionCode: string;
   amount: number;
   payerName: string;
   date: string;
-  clientId?: string; // Linked client
+  clientId?: string;
   rawMessage: string;
 }
 
 export interface ThemePalette {
   name: string;
-  primary: string;   // Main button color, Sidebar selected
-  secondary: string; // Sidebar background
-  accent: string;    // Highlights
-  text: string;      // Sidebar text
+  primary: string;
+  secondary: string;
+  accent: string;
+  text: string;
 }
 
 export interface ShopSettings {
   shopName: string;
-  phoneNumbers: string[]; // Changed to array
+  phoneNumbers: string[];
   logoUrl: string;
   fobPaybill: string;
-  fobAccountNumber: string; // Changed from Format to Number
+  fobAccountNumber: string;
   freightPaybill: string;
-  freightAccountNumber: string; // Changed from Format to Number
+  freightAccountNumber: string;
   theme: ThemePalette;
 }
 
@@ -124,4 +124,7 @@ export interface AppState {
   setCurrentView: (view: string) => void;
   pendingOrderClientId: string | null;
   setPendingOrderClientId: (id: string | null) => void;
+  
+  // System State
+  hasUsers: boolean | null; // Changed to allow null for loading state
 }

@@ -1,8 +1,8 @@
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
-import { Plus, Trash2, CheckCircle, Package, Search, FileText, Printer, X, CreditCard, AlertTriangle, MessageSquare, Copy, RefreshCw, Truck, Box, User, Settings, Lock, ShoppingCart, Calendar, ArrowLeft, ArrowRight, Wallet, ShoppingBag, Eye, EyeOff, ChevronDown } from 'lucide-react';
-import { Order, OrderItem, Product, Client, PaymentTransaction, DynamicAttribute } from '../types';
+import { Plus, Trash2, CheckCircle, Package, Search, Printer, X, CreditCard, AlertTriangle, MessageSquare, Copy, RefreshCw, User, ShoppingCart, ArrowLeft, ChevronDown, ShoppingBag } from 'lucide-react';
+import { Order, OrderItem, Client, DynamicAttribute } from '../types';
 import { generateInvoiceMessage } from '../services/geminiService';
 
 const Orders = () => {
@@ -17,8 +17,9 @@ const Orders = () => {
   const [activeTab, setActiveTab] = useState<'UNPAID' | 'PARTIAL' | 'CLEARED_FOB' | 'CLEARED_FREIGHT' | 'DELIVERY'>('UNPAID');
   const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
   const [invoiceType, setInvoiceType] = useState<'FOB' | 'FREIGHT'>('FOB');
-  const [invoiceViewMode, setInvoiceViewMode] = useState<'VISUAL' | 'TEXT'>('VISUAL');
-  const [includeOrderId, setIncludeOrderId] = useState(true);
+  // Changed default to TEXT as requested
+  const [invoiceViewMode, setInvoiceViewMode] = useState<'VISUAL' | 'TEXT'>('TEXT');
+  const [includeOrderId, setIncludeOrderId] = useState(false); // Default to false for cleaner text
   const [generatedMessage, setGeneratedMessage] = useState('');
   const [isGeneratingMsg, setIsGeneratingMsg] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -31,9 +32,6 @@ const Orders = () => {
   const [qtyToAdd, setQtyToAdd] = useState(1);
   const [itemAttributes, setItemAttributes] = useState<DynamicAttribute[]>([]);
 
-  // Drawer Step State
-  const [orderStep, setOrderStep] = useState<1 | 2>(1);
-
   const activeCatalog = catalogs.find(c => c.id === activeCatalogId);
 
   useEffect(() => {
@@ -45,12 +43,12 @@ const Orders = () => {
       }
   }, [pendingOrderClientId, catalogs]);
 
-  // Effect to regenerate text message when options change (if in text mode)
+  // Effect to regenerate text message when options or order changes
   useEffect(() => {
     if (invoiceViewMode === 'TEXT' && invoiceOrder) {
         handleGenerateMessage();
     }
-  }, [includeOrderId]);
+  }, [includeOrderId, invoiceOrder]); // Added invoiceOrder dependency to auto-generate on open
 
   const filteredClients = clients.filter(c => c.name.toLowerCase().includes(clientSearch.toLowerCase()) || c.phone.includes(clientSearch));
   const getClientName = (id: string) => clients.find(c => c.id === id)?.name || 'Unknown';
@@ -95,7 +93,14 @@ const Orders = () => {
 
   const handleFinalizeOrder = () => {
     if (!selectedClient || cartItems.length === 0) return;
+    
+    if (selectedClient.id.length < 10) {
+        alert("Invalid Client ID. This client might be from an old data import. Please re-create the client.");
+        return;
+    }
+
     const existingOrder = orders.find(o => o.clientId === selectedClient.id && !o.isLocked && o.status !== 'DELIVERED' && o.items.some(i => products.find(prod => prod.id === i.productId)?.catalogId === activeCatalogId));
+    
     if (existingOrder) {
         const updatedItems = [...existingOrder.items];
         cartItems.forEach(newItem => {
@@ -108,13 +113,24 @@ const Orders = () => {
         if (existingOrder.totalFobPaid > 0 && existingOrder.totalFobPaid < newTotalCost) newStatus = 'PARTIAL'; else if (existingOrder.totalFobPaid >= newTotalCost && newTotalCost > 0) newStatus = 'PAID'; else if (existingOrder.totalFobPaid === 0) newStatus = 'UNPAID';
         updateOrder({ ...existingOrder, items: updatedItems, fobPaymentStatus: newStatus });
     } else {
-        addOrder({ id: `ord-${Date.now()}`, clientId: selectedClient.id, orderDate: new Date().toISOString(), status: 'ARRIVED', fobPaymentStatus: 'UNPAID', freightPaymentStatus: 'UNPAID', totalFobPaid: 0, totalFreightPaid: 0, isLocked: false, items: cartItems });
+        const cleanItems = cartItems.map(({ id, ...rest }) => rest);
+        addOrder({ 
+            clientId: selectedClient.id, 
+            orderDate: new Date().toISOString(), 
+            status: 'ARRIVED', 
+            fobPaymentStatus: 'UNPAID', 
+            freightPaymentStatus: 'UNPAID', 
+            totalFobPaid: 0, 
+            totalFreightPaid: 0, 
+            isLocked: false, 
+            items: cleanItems as any 
+        } as Order);
     }
     resetDrawer();
   };
 
   const resetDrawer = () => {
-      setCartItems([]); setSelectedClient(null); setClientSearch(''); setIsDrawerOpen(false); setOrderStep(1);
+      setCartItems([]); setSelectedClient(null); setClientSearch(''); setIsDrawerOpen(false); 
   };
 
   const initiatePayment = (order: Order, type: 'FOB' | 'FREIGHT') => { setPaymentOrder(order); setPaymentContext(type); setPaymentMessage(''); setPaymentError(''); setIsPaymentModalOpen(true); };
@@ -125,7 +141,25 @@ const Orders = () => {
       if (codeMatch && amountMatch) {
           const amount = parseFloat(amountMatch[1].replace(/,/g, '')); const transactionCode = codeMatch[1];
           if (payments.some(p => p.transactionCode === transactionCode)) { setPaymentError('Code already used.'); return; }
-          addPayment({ id: `pay-${Date.now()}`, transactionCode, amount, payerName: getClientName(paymentOrder.clientId), clientId: paymentOrder.clientId, date: new Date().toISOString(), rawMessage: paymentMessage }); 
+          
+          addPayment({ transactionCode, amount, payerName: getClientName(paymentOrder.clientId), clientId: paymentOrder.clientId, date: new Date().toISOString(), rawMessage: paymentMessage } as any); 
+          
+          const isFob = paymentContext === 'FOB';
+          const currentPaid = isFob ? paymentOrder.totalFobPaid : paymentOrder.totalFreightPaid;
+          const newPaid = currentPaid + amount;
+          
+          const totalCost = paymentOrder.items.reduce((sum, item) => sum + (isFob ? item.fobTotal : item.freightTotal), 0);
+          
+          let newStatus: any = 'UNPAID';
+          if (newPaid >= totalCost && totalCost > 0) newStatus = 'PAID';
+          else if (newPaid > 0) newStatus = 'PARTIAL';
+          
+          const updatedFields = isFob 
+            ? { totalFobPaid: newPaid, fobPaymentStatus: newStatus } 
+            : { totalFreightPaid: newPaid, freightPaymentStatus: newStatus };
+            
+          updateOrder({ ...paymentOrder, ...updatedFields });
+
           setIsPaymentModalOpen(false); setPaymentOrder(null);
       } else setPaymentError('Invalid format.');
   };
@@ -134,7 +168,11 @@ const Orders = () => {
 
   const handleOpenInvoice = (order: Order, type: 'FOB' | 'FREIGHT') => {
       if (type === 'FREIGHT' && !order.items.some(item => products.find(prod => prod.id === item.productId)?.stockStatus === 'ARRIVED')) { alert("No arrived items for Freight Invoice."); return; }
-      setInvoiceOrder(order); setInvoiceType(type); setInvoiceViewMode('VISUAL'); setGeneratedMessage(''); setIncludeOrderId(true);
+      setInvoiceOrder(order); 
+      setInvoiceType(type); 
+      setInvoiceViewMode('TEXT'); // Force TEXT mode
+      setGeneratedMessage(''); 
+      setIncludeOrderId(false); // Default to false for custom format
   };
 
   const handleGenerateMessage = async () => {
@@ -146,6 +184,7 @@ const Orders = () => {
     if (client) {
         const filteredItems = invoiceOrder.items.filter(item => invoiceType === 'FOB' ? true : products.find(prod => prod.id === item.productId)?.stockStatus === 'ARRIVED');
         const msg = await generateInvoiceMessage({ ...invoiceOrder, items: filteredItems }, client, products, invoiceType, deadline, shopSettings);
+        // Only append ID if checkbox is explicitly checked
         const finalMsg = includeOrderId ? `Order ID: ${invoiceOrder.id.slice(-6).toUpperCase()}\n${msg}` : msg;
         setGeneratedMessage(finalMsg);
     }
@@ -245,16 +284,12 @@ const Orders = () => {
                                  <span className="text-xs font-bold theme-text">Total: Ksh {totalVal.toLocaleString()}</span>}
                             </td>
                             <td className="px-6 py-4">
-                                {isPickedOrDelivered ? <span className="text-xs text-gray-400 font-medium flex items-center"><Lock size={12} className="mr-1"/> Completed</span> : 
+                                {isPickedOrDelivered ? <span className="text-xs text-gray-400 font-medium flex items-center"><CheckCircle size={12} className="mr-1"/> Completed</span> : 
                                 <div className="flex flex-col gap-2">
-                                    {/* Logic based on activeTab */}
-                                    
-                                    {/* Default / Unpaid / Partial: Show FOB Invoice */}
                                     {['UNPAID', 'PARTIAL'].includes(activeTab) && (
                                         <button onClick={() => handleOpenInvoice(order, 'FOB')} className="text-xs flex items-center justify-center theme-text theme-bg-light px-3 py-1.5 rounded font-medium"><MessageSquare size={12} className="mr-1"/> FOB Invoice</button>
                                     )}
 
-                                    {/* Cleared FOB: Show Freight Invoice Only (if arrived) */}
                                     {activeTab === 'CLEARED_FOB' && (
                                         <>
                                             {hasArrivedItems ? (
@@ -265,14 +300,8 @@ const Orders = () => {
                                         </>
                                     )}
 
-                                    {/* Cleared Freight: No Invoice Buttons */}
                                     {activeTab === 'CLEARED_FREIGHT' && (
                                         <span className="text-xs text-green-600 font-bold flex items-center"><CheckCircle size={12} className="mr-1"/> Fully Paid</span>
-                                    )}
-
-                                    {/* Delivery: No Freight Buttons */}
-                                    {activeTab === 'DELIVERY' && (
-                                         <button onClick={() => handleOpenInvoice(order, 'FOB')} className="text-xs flex items-center justify-center theme-text theme-bg-light px-3 py-1.5 rounded font-medium"><MessageSquare size={12} className="mr-1"/> Receipt / FOB Inv</button>
                                     )}
                                 </div>}
                             </td>
@@ -284,7 +313,7 @@ const Orders = () => {
         </div>
       </div>
       
-      {/* ... Modals and Popups remain unchanged ... */}
+      {/* ... Modals and Popups ... */}
       {viewingClientId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col">
@@ -344,7 +373,7 @@ const Orders = () => {
                           <div className="w-full bg-white rounded-3xl shadow-xl overflow-hidden border">
                                <div className="bg-[#075e54] text-white p-4 flex items-center gap-2"><MessageSquare size={16} /><span className="font-medium">WhatsApp Invoice</span></div>
                               <div className="p-6 bg-[#efe7dd] min-h-[350px] flex flex-col">
-                                  {isGeneratingMsg ? <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div><p className="text-sm">Drafting...</p></div> : <><textarea className="flex-1 w-full bg-white rounded-lg p-4 shadow-sm text-sm border-none outline-none resize-none text-gray-900" value={generatedMessage} onChange={(e) => setGeneratedMessage(e.target.value)}/><div className="mt-4 flex gap-2"><button onClick={handleGenerateMessage} className="flex-1 flex items-center justify-center py-2 theme-bg text-white rounded-lg font-medium text-sm"><RefreshCw size={16} className="mr-2"/> Regenerate</button><button onClick={copyToClipboard} className="flex-1 flex items-center justify-center py-2 bg-[#25D366] text-white rounded-lg font-medium text-sm"><Copy size={16} className="mr-2"/> Copy</button></div></>}
+                                  {isGeneratingMsg ? <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div><p className="text-sm">Drafting with AI...</p></div> : <><textarea className="flex-1 w-full bg-white rounded-lg p-4 shadow-sm text-sm border-none outline-none resize-none text-gray-900" value={generatedMessage} onChange={(e) => setGeneratedMessage(e.target.value)}/><div className="mt-4 flex gap-2"><button onClick={handleGenerateMessage} className="flex-1 flex items-center justify-center py-2 theme-bg text-white rounded-lg font-medium text-sm"><RefreshCw size={16} className="mr-2"/> Regenerate</button><button onClick={copyToClipboard} className="flex-1 flex items-center justify-center py-2 bg-[#25D366] text-white rounded-lg font-medium text-sm"><Copy size={16} className="mr-2"/> Copy</button></div></>}
                               </div>
                           </div>
                       </div>
@@ -353,7 +382,7 @@ const Orders = () => {
           </div>
       )}
       
-      {/* Drawer Component remains unchanged */}
+      {/* Drawer Component ... */}
       {isDrawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
           <div className="w-full max-w-xl bg-white h-full shadow-2xl flex flex-col animate-slide-in">

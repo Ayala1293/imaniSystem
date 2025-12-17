@@ -43,10 +43,17 @@ router.put('/', protect, admin, async (req, res) => {
 
 // @route   POST /api/settings/import
 // @desc    Full Data Restore / Demo Data Load
-// NOTE: Transactions removed to support standalone MongoDB (Desktop installation)
 router.post('/import', protect, admin, async (req, res) => {
     try {
         const { catalogs, products, clients, orders, payments, shopSettings } = req.body;
+
+        // Relaxed Check: ensure at least something is there. 
+        // We check if the object is empty or if all key arrays are missing/empty.
+        const hasData = (catalogs && catalogs.length) || (products && products.length) || (clients && clients.length) || (shopSettings);
+
+        if (!hasData) {
+             return res.status(400).json({ message: 'Import file appears empty or invalid.' });
+        }
 
         // 1. Clear existing data
         await Catalog.deleteMany({});
@@ -57,7 +64,8 @@ router.post('/import', protect, admin, async (req, res) => {
         
         // Update Settings if provided
         if (shopSettings) {
-            await ShopSettings.findOneAndUpdate({}, shopSettings, { upsert: true });
+            const { _id, ...settingsData } = shopSettings;
+            await ShopSettings.findOneAndUpdate({}, settingsData, { upsert: true });
         }
 
         // Mappings to track old IDs -> new Mongo ObjectIds
@@ -68,8 +76,17 @@ router.post('/import', protect, admin, async (req, res) => {
         // 2. Import Catalogs
         if (catalogs && catalogs.length > 0) {
             for (const cat of catalogs) {
-                const newCat = new Catalog({ ...cat, _id: new mongoose.Types.ObjectId() });
-                mapCatalog[cat.id] = newCat._id;
+                const newId = new mongoose.Types.ObjectId();
+                const sourceId = cat.id || cat._id;
+                if(sourceId) mapCatalog[sourceId] = newId;
+
+                const newCat = new Catalog({
+                    _id: newId,
+                    name: cat.name,
+                    closingDate: cat.closingDate,
+                    status: cat.status,
+                    createdAt: cat.createdAt
+                });
                 await newCat.save();
             }
         }
@@ -77,12 +94,24 @@ router.post('/import', protect, admin, async (req, res) => {
         // 3. Import Products (Link to Catalogs)
         if (products && products.length > 0) {
             for (const prod of products) {
+                const newId = new mongoose.Types.ObjectId();
+                const sourceId = prod.id || prod._id;
+                if(sourceId) mapProduct[sourceId] = newId;
+
                 const newProd = new Product({
-                    ...prod,
-                    _id: new mongoose.Types.ObjectId(),
-                    catalogId: mapCatalog[prod.catalogId] || prod.catalogId 
+                    _id: newId,
+                    catalogId: mapCatalog[prod.catalogId] ? mapCatalog[prod.catalogId].toString() : prod.catalogId,
+                    name: prod.name,
+                    description: prod.description,
+                    imageUrl: prod.imageUrl,
+                    category: prod.category,
+                    fobPrice: prod.fobPrice,
+                    freightCharge: prod.freightCharge,
+                    attributes: prod.attributes,
+                    stockStatus: prod.stockStatus,
+                    stockCounts: prod.stockCounts,
+                    stockSold: prod.stockSold
                 });
-                mapProduct[prod.id] = newProd._id;
                 await newProd.save();
             }
         }
@@ -90,8 +119,16 @@ router.post('/import', protect, admin, async (req, res) => {
         // 4. Import Clients
         if (clients && clients.length > 0) {
             for (const cli of clients) {
-                const newCli = new Client({ ...cli, _id: new mongoose.Types.ObjectId() });
-                mapClient[cli.id] = newCli._id;
+                const newId = new mongoose.Types.ObjectId();
+                const sourceId = cli.id || cli._id;
+                if(sourceId) mapClient[sourceId] = newId;
+
+                const newCli = new Client({
+                    _id: newId,
+                    name: cli.name,
+                    phone: cli.phone,
+                    email: cli.email
+                });
                 await newCli.save();
             }
         }
@@ -99,18 +136,34 @@ router.post('/import', protect, admin, async (req, res) => {
         // 5. Import Orders (Link to Clients and Products)
         if (orders && orders.length > 0) {
             for (const ord of orders) {
+                const mappedClientId = mapClient[ord.clientId];
+                // Skip if client reference is invalid to prevent CastError
+                if (!mappedClientId) {
+                    // console.warn(`Skipping order ${ord.id} - missing client ref`);
+                    continue; 
+                }
+
                 const newItems = ord.items.map(item => {
-                    const { _id, id, ...rest } = item;
+                    const mappedProductId = mapProduct[item.productId];
                     return {
-                        ...rest,
-                        productId: mapProduct[item.productId] || item.productId
+                        productId: mappedProductId || new mongoose.Types.ObjectId(), // Fallback to avoid schema validation error
+                        quantity: item.quantity,
+                        fobTotal: item.fobTotal,
+                        freightTotal: item.freightTotal,
+                        selectedAttributes: item.selectedAttributes
                     };
                 });
 
                 const newOrd = new Order({
-                    ...ord,
-                    clientId: mapClient[ord.clientId] || ord.clientId,
-                    items: newItems
+                    clientId: mappedClientId,
+                    items: newItems,
+                    orderDate: ord.orderDate,
+                    status: ord.status,
+                    fobPaymentStatus: ord.fobPaymentStatus,
+                    freightPaymentStatus: ord.freightPaymentStatus,
+                    totalFobPaid: ord.totalFobPaid,
+                    totalFreightPaid: ord.totalFreightPaid,
+                    isLocked: ord.isLocked
                 });
                 await newOrd.save();
             }
@@ -119,9 +172,16 @@ router.post('/import', protect, admin, async (req, res) => {
         // 6. Import Payments (Link to Clients)
         if (payments && payments.length > 0) {
             for (const pay of payments) {
+                const mappedClientId = mapClient[pay.clientId];
+                if (!mappedClientId) continue;
+
                 const newPay = new Payment({
-                    ...pay,
-                    clientId: mapClient[pay.clientId] || pay.clientId
+                    transactionCode: pay.transactionCode,
+                    amount: pay.amount,
+                    payerName: pay.payerName,
+                    date: pay.date,
+                    clientId: mappedClientId,
+                    rawMessage: pay.rawMessage
                 });
                 await newPay.save();
             }

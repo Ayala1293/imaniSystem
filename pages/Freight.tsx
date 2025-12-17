@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAppStore } from '../store';
-import { Container, Edit2, Search, Save, AlertCircle, Calendar, ArrowLeft } from 'lucide-react';
+import { Container, Edit2, Search } from 'lucide-react';
 import { Product } from '../types';
 
 const Freight = () => {
@@ -67,7 +67,7 @@ const Freight = () => {
 
   return (
       <div className="space-y-6">
-          <div className="flex items-center gap-4 mb-2"><button onClick={() => setActiveCatalogId(null)} className="p-2 hover:bg-gray-200 rounded-full"><ArrowLeft size={20} className="text-gray-600"/></button><h2 className="text-3xl font-bold text-gray-800">{activeCatalog?.name} Freight</h2></div>
+          <div className="flex items-center gap-4 mb-2"><button onClick={() => setActiveCatalogId(null)} className="p-2 hover:bg-gray-200 rounded-full"><Edit2 size={20} className="text-gray-600"/></button><h2 className="text-3xl font-bold text-gray-800">{activeCatalog?.name} Freight</h2></div>
           <div className="bg-white p-2 rounded-lg border flex items-center w-64 shadow-sm"><Search className="text-gray-400 mr-2" size={18} /><input className="flex-1 outline-none text-sm bg-white text-gray-800" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}/></div>
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
               <table className="w-full">
