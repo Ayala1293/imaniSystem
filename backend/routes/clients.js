@@ -46,4 +46,23 @@ router.post('/bulk', protect, async (req, res) => {
     }
 });
 
+// Fix: Added missing PUT route for client updates
+router.put('/:id', protect, async (req, res) => {
+    try {
+        const client = await Client.findById(req.params.id);
+        if (client) {
+            // Stripping metadata and client-side IDs
+            const { id, _id, createdAt, updatedAt, __v, ...updateData } = req.body;
+            Object.assign(client, updateData);
+            const updatedClient = await client.save();
+            res.json(updatedClient);
+        } else {
+            res.status(404).json({ message: 'Client not found' });
+        }
+    } catch (err) {
+        console.error("Backend Client Update Error:", err);
+        res.status(400).json({ message: err.message });
+    }
+});
+
 module.exports = router;

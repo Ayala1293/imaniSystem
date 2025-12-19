@@ -4,19 +4,18 @@ export type UserRole = 'ADMIN' | 'ORDER_ENTRY';
 export interface User {
   id: string;
   name: string;
-  username: string; // Changed from email
+  username: string;
   role: UserRole;
   passwordHash?: string;
-  resetToken?: string;
-  resetTokenExpiry?: string;
 }
 
-export interface AuthLog {
+export interface Expense {
   id: string;
-  timestamp: string;
-  username: string; // Changed from email
-  action: 'LOGIN_SUCCESS' | 'LOGIN_FAILED' | 'PASSWORD_CHANGE' | 'RESET_REQUEST';
-  details?: string;
+  category: string;
+  amount: number;
+  description: string;
+  date: string;
+  recordedBy: string;
 }
 
 export interface DynamicAttribute {
@@ -42,6 +41,7 @@ export interface Product {
   fobPrice: number;
   freightCharge: number;
   category: string;
+  minStockLevel?: number; // New: Alert threshold
   stockStatus?: 'PENDING' | 'ARRIVED';
   stockCounts?: Record<string, number>;
   stockSold?: Record<string, number>;
@@ -52,6 +52,7 @@ export interface Client {
   name: string;
   phone: string;
   email?: string;
+  balance?: number; // Total debt/credit
 }
 
 export type OrderStatus = 'DRAFT' | 'CONFIRMED' | 'SHIPPED' | 'ARRIVED' | 'DELIVERED';
@@ -111,20 +112,17 @@ export interface ShopSettings {
 export interface AppState {
   currentUser: User | null;
   users: User[];
-  authLogs: AuthLog[];
   catalogs: Catalog[];
   products: Product[];
   clients: Client[];
   orders: Order[];
   payments: PaymentTransaction[];
+  expenses: Expense[]; // New: Expense tracking
   shopSettings: ShopSettings;
-  
-  // Navigation & UI State
   currentView: string;
   setCurrentView: (view: string) => void;
   pendingOrderClientId: string | null;
   setPendingOrderClientId: (id: string | null) => void;
-  
-  // System State
-  hasUsers: boolean | null; // Changed to allow null for loading state
+  hasUsers: boolean | null;
+  isOffline: boolean;
 }

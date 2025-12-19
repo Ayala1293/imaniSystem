@@ -2,16 +2,24 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: './', // Crucial for Electron file protocol
+  base: './',
   server: {
     port: 3000,
+    hmr: {
+      overlay: false // Faster recovery from errors
+    }
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'lucide-react', 'recharts', 'jspdf', 'xlsx']
   },
   define: {
-    // FIX: Only define the specific variable. 
-    // Defining 'process.env': {...} replaces the whole object and breaks libraries relying on process.env existing.
-    'process.env.API_KEY': JSON.stringify("AIzaSyDO2wvg7QptTPAJVk0sN_uqwf-PQralilM")
+    'process.env.API_KEY': JSON.stringify(process.env.API_KEY)
+  },
+  build: {
+    target: 'esnext',
+    minify: 'esbuild',
+    cssMinify: true
   }
 })

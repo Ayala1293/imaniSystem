@@ -1,4 +1,3 @@
-
 const { app, BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const { spawn, fork } = require('child_process');
@@ -13,13 +12,10 @@ const platform = process.platform;
 const mongoExec = platform === 'win32' ? 'mongod.exe' : 'mongod';
 
 // PATH CONFIGURATION
-// In production, 'resources' folder is at process.resourcesPath
-// In dev, we look relative to this file
 const mongoBinPath = isDev 
     ? path.join(__dirname, '../resources/mongodb/bin', mongoExec)
     : path.join(process.resourcesPath, 'mongodb/bin', mongoExec);
 
-// In production, we copied 'backend' to resources/backend via electron-builder
 const serverPath = isDev
     ? path.join(__dirname, '../backend/server.js')
     : path.join(process.resourcesPath, 'backend/server.js');
@@ -34,7 +30,6 @@ if (!fs.existsSync(dbPath)) {
 function startMongoDB() {
     if (fs.existsSync(mongoBinPath)) {
         console.log("Starting MongoDB from:", mongoBinPath);
-        // Bind to localhost only for security
         mongoProcess = spawn(mongoBinPath, ['--dbpath', dbPath, '--port', '27017', '--bind_ip', '127.0.0.1']);
         
         mongoProcess.stdout.on('data', (data) => console.log(`[Mongo]: ${data}`));
@@ -50,7 +45,6 @@ function startMongoDB() {
 function startExpressServer() {
     if (!fs.existsSync(serverPath)) {
         console.error("Backend server file not found at:", serverPath);
-        dialog.showErrorBox("Missing Backend File", `Could not find server.js at: ${serverPath}`);
         return;
     }
 
@@ -62,32 +56,13 @@ function startExpressServer() {
 
     console.log("Starting Express Backend...");
     
-    // CRITICAL CHANGE: Use 'fork' instead of 'spawn'.
-    // 'fork' uses the Electron app's internal Node.js runtime to execute the script.
-    // This allows the app to run on computers that do NOT have Node.js installed.
     serverProcess = fork(serverPath, [], { 
         env, 
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'] 
     });
 
-    let errorBuffer = '';
-
     serverProcess.stdout.on('data', (data) => console.log(`[Backend]: ${data}`));
-    
-    serverProcess.stderr.on('data', (data) => {
-        console.error(`[Backend Err]: ${data}`);
-        errorBuffer += data.toString();
-    });
-    
-    serverProcess.on('exit', (code, signal) => {
-        if (code !== 0 && code !== null) {
-            console.error(`Backend process exited with code ${code}`);
-            // Only show error dialog if it's not a standard close
-            if (!mainWindow || !mainWindow.isDestroyed()) {
-                 // dialog.showErrorBox("Backend Stopped", `Server stopped. Code: ${code}\n${errorBuffer.slice(0, 300)}`);
-            }
-        }
-    });
+    serverProcess.stderr.on('data', (data) => console.error(`[Backend Err]: ${data}`));
 }
 
 function createWindow() {
@@ -111,13 +86,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    // Start all services concurrently for maximum speed
     startMongoDB();
-    // Give Mongo 2 seconds to warm up
-    setTimeout(() => {
-        startExpressServer();
-        // Give Backend 1 second to bind port
-        setTimeout(createWindow, 1000);
-    }, 2000);
+    startExpressServer();
+    createWindow();
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -1,5 +1,7 @@
 
+import React from 'react';
 import { 
+  LayoutDashboard,
   Package, 
   ShoppingCart, 
   Users, 
@@ -17,13 +19,14 @@ const Sidebar = () => {
   const { currentUser, logout, currentView, setCurrentView, shopSettings, isOffline } = useAppStore();
 
   const menuItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'orders', label: 'Running Orders', icon: ShoppingCart },
     { id: 'payments', label: 'Payments (M-Pesa)', icon: CreditCard },
     { id: 'clients', label: 'Clients', icon: Users },
     { id: 'freight', label: 'Set Freight', icon: Container, adminOnly: true },
-    { id: 'stock', label: 'Stock Taking', icon: ClipboardCheck, adminOnly: false },
+    { id: 'stock', label: 'Stock Taking', icon: ClipboardCheck },
     { id: 'products', label: 'Product Catalog', icon: Package, adminOnly: true },
-    { id: 'reports', label: 'Reports & Export', icon: FileText },
+    { id: 'reports', label: 'Data & Reports', icon: FileText },
     { id: 'settings', label: 'Shop Settings', icon: Settings, adminOnly: true },
   ];
 
@@ -36,11 +39,11 @@ const Sidebar = () => {
         }}
     >
       <div className="p-6 border-b border-gray-700/30">
-        <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#fff' }}>
+        <h1 className="text-xl font-bold tracking-tight" style={{ color: '#fff' }}>
             {shopSettings.shopName}
         </h1>
         <div className="flex items-center justify-between mt-1">
-             <p className="text-xs opacity-70">v3.0.0 • {currentUser?.role}</p>
+             <p className="text-[10px] opacity-70">v3.0.0 • {currentUser?.role}</p>
              {isOffline && <span className="flex items-center text-[10px] bg-red-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse"><WifiOff size={10} className="mr-1"/> OFFLINE</span>}
         </div>
       </div>
@@ -63,8 +66,8 @@ const Sidebar = () => {
                       borderRight: '4px solid var(--color-accent)'
                   } : {}}
                 >
-                  <Icon size={20} className="mr-3" />
-                  <span className="font-medium">{item.label}</span>
+                  <Icon size={18} className="mr-3" />
+                  <span className="font-medium text-sm">{item.label}</span>
                 </button>
               </li>
             );
@@ -75,21 +78,21 @@ const Sidebar = () => {
       <div className="p-4 border-t border-gray-700/30">
         <div className="flex items-center gap-3 mb-4 px-2">
             <div 
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs"
                 style={{ backgroundColor: 'var(--color-accent)' }}
             >
                 {currentUser?.name.charAt(0)}
             </div>
             <div className="overflow-hidden">
-                <p className="text-sm font-medium truncate" style={{ color: '#fff' }}>{currentUser?.name}</p>
-                <p className="text-xs opacity-60 truncate">Connected</p>
+                <p className="text-xs font-medium truncate" style={{ color: '#fff' }}>{currentUser?.name}</p>
+                <p className="text-[10px] opacity-60 truncate">Connected</p>
             </div>
         </div>
         <button 
             onClick={logout}
-            className="w-full flex items-center justify-center px-4 py-2 bg-black/20 hover:bg-red-900/50 hover:text-red-300 rounded-lg transition-all text-sm"
+            className="w-full flex items-center justify-center px-4 py-2 bg-black/20 hover:bg-red-900/50 hover:text-red-300 rounded-lg transition-all text-xs"
         >
-          <LogOut size={16} className="mr-2" />
+          <LogOut size={14} className="mr-2" />
           Sign Out
         </button>
       </div>

@@ -3,8 +3,8 @@ import { Product, Order, Client, ShopSettings } from "../types";
 import { GoogleGenAI } from "@google/genai";
 
 // Initialize the API client
-const apiKey = process.env.API_KEY || ''; 
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+// Always use the process.env.API_KEY string directly and assume it's pre-configured.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 // Fallback template generator if API key is missing or fails
 const generateTemplateDescription = (name: string, attributes: string) => {
@@ -63,16 +63,13 @@ Payment deadline is ${new Date(deadlineDateStr).toLocaleDateString()}. Thankyou 
 };
 
 export const generateProductDescription = async (name: string, attributes: string): Promise<string> => {
-  if (!ai) {
-      console.warn("Google GenAI API Key missing. Using template.");
-      return generateTemplateDescription(name, attributes);
-  }
-
   try {
+      // Use gemini-3-flash-preview for Basic Text Tasks
       const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-3-flash-preview',
           contents: `Write a short, catchy, professional sales description (max 2 sentences) for a product named "${name}" with these attributes: ${attributes}. Do not use hashtags.`,
       });
+      // Directly access .text property from response
       return response.text?.trim() || generateTemplateDescription(name, attributes);
   } catch (error) {
       console.error("AI Generation Error:", error);
@@ -81,10 +78,6 @@ export const generateProductDescription = async (name: string, attributes: strin
 };
 
 export const generateInvoiceMessage = async (order: Order, client: Client, products: Product[], type: 'FOB' | 'FREIGHT', deadlineDateStr: string, settings: ShopSettings): Promise<string> => {
-  if (!ai) {
-      return generateTemplateInvoice(order, client, products, type, deadlineDateStr, settings);
-  }
-
   // Construct context for the AI
   const itemsList = order.items.map((item, index) => {
       const product = products.find(p => p.id === item.productId);
@@ -148,10 +141,12 @@ export const generateInvoiceMessage = async (order: Order, client: Client, produ
   }
 
   try {
+      // Use gemini-3-flash-preview for Basic Text Tasks
       const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-3-flash-preview',
           contents: prompt,
       });
+      // Directly access .text property from response
       return response.text?.trim() || generateTemplateInvoice(order, client, products, type, deadlineDateStr, settings);
   } catch (error) {
       console.error("AI Generation Error:", error);

@@ -1,285 +1,163 @@
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useAppStore } from '../store';
-import { Download, Package, ArrowLeft, Users, FileText } from 'lucide-react';
-import { jsPDF, GState } from "jspdf";
+import { Download, Package, ArrowLeft, Users, FileText, Database, Upload, Loader, Printer } from 'lucide-react';
+import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Product } from '../types';
 
 const Reports = () => {
-  const { orders, products, catalogs, clients, shopSettings } = useAppStore();
+  const { orders, products, catalogs, clients, shopSettings, payments, expenses, importData } = useAppStore();
   const [activeCatalogId, setActiveCatalogId] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeCatalog = catalogs.find(c => c.id === activeCatalogId);
 
-  // --- Data Helpers ---
-
-  // Filter orders for the current catalog
-  const getCatalogOrders = () => !activeCatalogId ? [] : orders.filter(order => order.items.some(item => products.find(p => p.id === item.productId)?.catalogId === activeCatalogId));
-
-  // 1. Prepare Product Summary Data
-  const getProductSummaryData = () => {
-      const summary = new Map<string, { product: Product, variants: Map<string, number>, totalQty: number }>();
-      
-      getCatalogOrders().forEach(order => order.items.forEach(item => {
-          const product = products.find(p => p.id === item.productId);
-          // Only count items belonging to this catalog
-          if (product && product.catalogId === activeCatalogId) {
-              if (!summary.has(product.id)) {
-                  summary.set(product.id, { product, variants: new Map(), totalQty: 0 });
-              }
-              
-              const entry = summary.get(product.id)!;
-              
-              const variantKey = item.selectedAttributes.length > 0 
-                  ? item.selectedAttributes.map(a => `${a.value}`).join(' ') 
-                  : 'Standard';
-
-              const currentVariantQty = entry.variants.get(variantKey) || 0;
-              entry.variants.set(variantKey, currentVariantQty + item.quantity);
-              entry.totalQty += item.quantity;
-          }
-      }));
-
-      // Convert Map to Array for AutoTable
-      return Array.from(summary.values()).map(item => {
-          const variantDetails = Array.from(item.variants.entries())
-              .map(([variant, qty]) => `${variant} (x${qty})`)
-              .join(',\n');
-
-          return [
-              item.product.name,
-              item.product.category,
-              variantDetails,
-              item.totalQty.toString()
-          ];
-      });
+  const handleDownloadBackup = () => {
+    const backupData = { 
+        catalogs, 
+        products, 
+        clients, 
+        orders, 
+        payments, 
+        expenses,
+        shopSettings,
+        exportedAt: new Date().toISOString() 
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `IMANI_FULL_BACKUP_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
-  // 2. Prepare Client List Data
-  const getClientData = () => {
-      const clientData: { id: string, name: string, phone: string, items: string[] }[] = [];
-      const orders = getCatalogOrders();
+  const handleUploadBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!window.confirm("WARNING: This will replace ALL current data with the contents of the backup file. Proceed?")) return;
 
-      orders.forEach(order => {
-          const client = clients.find(c => c.id === order.clientId);
-          if (!client) return;
-
-          let entry = clientData.find(c => c.id === client.id);
-          if (!entry) {
-              entry = { id: client.id, name: client.name, phone: client.phone, items: [] };
-              clientData.push(entry);
-          }
-
-          order.items.forEach(item => {
-              const product = products.find(p => p.id === item.productId);
-              if (product && product.catalogId === activeCatalogId) {
-                  const attrs = item.selectedAttributes.map(a => a.value).join(' ');
-                  const attrStr = attrs ? `[${attrs}]` : '';
-                  entry!.items.push(`${item.quantity}x ${product.name} ${attrStr}`);
-              }
-          });
-      });
-
-      return clientData
-          .filter(c => c.items.length > 0)
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(c => [
-              c.name,
-              c.phone,
-              c.items.join('\n')
-          ]);
+    setIsImporting(true);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+        try {
+            const data = JSON.parse(evt.target?.result as string);
+            const success = await importData(data);
+            if (success) {
+                alert("Database restored successfully!");
+                window.location.reload();
+            } else {
+                alert("Import failed. Check file format.");
+            }
+        } catch (err) { 
+            console.error("Import error:", err);
+            alert("Invalid JSON file or corrupted data."); 
+        }
+        finally { setIsImporting(false); }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // --- PDF Generators ---
-
-  const initPDF = (title: string) => {
-      const doc = new jsPDF();
-      
-      const primaryColor = shopSettings.theme.primary;
-      const secondaryColor = shopSettings.theme.secondary;
-
-      // 0. Watermark (Underneath everything)
-      if (shopSettings.logoUrl) {
-          try {
-            const pdfWidth = doc.internal.pageSize.getWidth();
-            const pdfHeight = doc.internal.pageSize.getHeight();
-            
-            // Calculate dimensions to keep aspect ratio, max width 100mm
-            const imgProps = doc.getImageProperties(shopSettings.logoUrl);
-            const imgWidth = 80; 
-            const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
-            
-            const x = (pdfWidth - imgWidth) / 2;
-            const y = (pdfHeight - imgHeight) / 2;
-
-            // Detect format from base64 string
-            const formatMatch = shopSettings.logoUrl.match(/^data:image\/(\w+);base64,/);
-            const format = formatMatch ? formatMatch[1].toUpperCase() : 'PNG';
-
-            // Set transparency to very light (0.1)
-            doc.saveGraphicsState();
-            doc.setGState(new GState({ opacity: 0.08 }));
-            doc.addImage(shopSettings.logoUrl, format, x, y, imgWidth, imgHeight, undefined, 'FAST');
-            doc.restoreGraphicsState();
-          } catch (e) {
-              console.warn("Failed to add watermark", e);
-          }
-      }
-
-      // 1. Header Bar (Secondary Color)
-      doc.setFillColor(secondaryColor);
-      doc.rect(0, 0, doc.internal.pageSize.width, 24, 'F');
-
-      // 2. Shop Name (White)
-      doc.setTextColor("#FFFFFF");
-      doc.setFontSize(14);
-      doc.setFont("helvetica", "bold");
-      doc.text(shopSettings.shopName, 14, 16);
-
-      // 3. Document Title (Primary/Gold Color)
-      doc.setTextColor(primaryColor);
-      doc.setFontSize(18);
-      doc.text(title.toUpperCase(), 14, 40);
-
-      // 4. Catalog Subtitle
-      if (activeCatalog) {
-          doc.setTextColor("#555555");
-          doc.setFontSize(10);
-          doc.setFont("helvetica", "normal");
-          doc.text(`Catalog: ${activeCatalog.name}`, 14, 46);
-      }
-
-      return { doc, primaryColor, secondaryColor };
+  const generateProductSummary = () => {
+      if (!activeCatalog) return;
+      setIsGeneratingPdf(true);
+      try {
+        const doc = new jsPDF();
+        const catalogProducts = products.filter(p => p.catalogId === activeCatalogId);
+        doc.setFontSize(22); doc.text(shopSettings.shopName, 14, 20);
+        doc.setFontSize(10); doc.text(`Inventory: ${activeCatalog.name}`, 14, 28);
+        const tableBody = catalogProducts.map(p => {
+            const catalogOrders = orders.filter(o => o.items.some(i => i.productId === p.id));
+            const totalUnits = catalogOrders.reduce((acc, o) => acc + o.items.filter(i => i.productId === p.id).reduce((s,i) => s + i.quantity, 0), 0);
+            return [p.name, p.category, p.fobPrice.toLocaleString(), totalUnits.toString()];
+        });
+        autoTable(doc, { startY: 40, head: [['Product', 'Category', 'Price', 'Sold']], body: tableBody });
+        doc.save(`${activeCatalog.name}_Inventory.pdf`);
+      } finally { setIsGeneratingPdf(false); }
   };
 
-  const generateProductSummaryPDF = () => {
-      const { doc, secondaryColor } = initPDF(`Product Summary`);
-      const tableData = getProductSummaryData();
-
-      autoTable(doc, {
-          startY: 55,
-          head: [['Product Name', 'Category', 'Variant Breakdown', 'Total Qty']],
-          body: tableData,
-          theme: 'grid',
-          headStyles: { 
-              fillColor: secondaryColor, 
-              textColor: "#FFFFFF",
-              fontStyle: 'bold' 
-          },
-          columnStyles: {
-              0: { fontStyle: 'bold', cellWidth: 50 }, // Product Name
-              2: { cellWidth: 'auto' }, // Variants
-              3: { halign: 'center', fontStyle: 'bold', cellWidth: 20 } // Qty
-          },
-          alternateRowStyles: {
-              fillColor: "#F9FAFB"
-          },
-          margin: { top: 55 }
-      });
-
-      doc.save(`Summary_${activeCatalog?.name.replace(/\s+/g, '_')}.pdf`);
-  };
-
-  const generateClientListPDF = () => {
-      const { doc, primaryColor } = initPDF(`Client Order List`);
-      const tableData = getClientData();
-
-      autoTable(doc, {
-          startY: 55,
-          head: [['Client Name', 'Phone Contact', 'Ordered Items']],
-          body: tableData,
-          theme: 'grid',
-          headStyles: { 
-              fillColor: primaryColor, 
-              textColor: "#FFFFFF",
-              fontStyle: 'bold' 
-          },
-          columnStyles: {
-              0: { fontStyle: 'bold', cellWidth: 40 },
-              1: { cellWidth: 35 },
-              2: { cellWidth: 'auto' }
-          },
-          styles: {
-              cellPadding: 4,
-              overflow: 'linebreak'
-          },
-          margin: { top: 55 }
-      });
-
-      doc.save(`Clients_${activeCatalog?.name.replace(/\s+/g, '_')}.pdf`);
+  const generateClientList = () => {
+      if (!activeCatalog) return;
+      setIsGeneratingPdf(true);
+      try {
+        const doc = new jsPDF();
+        const catalogOrders = orders.filter(o => o.items.some(i => products.find(p => p.id === i.productId)?.catalogId === activeCatalogId));
+        const activeClients = clients.filter(c => new Set(catalogOrders.map(o => o.clientId)).has(c.id));
+        doc.setFontSize(22); doc.text(shopSettings.shopName, 14, 20);
+        doc.setFontSize(10); doc.text(`Clients: ${activeCatalog.name}`, 14, 28);
+        const tableBody = activeClients.map(c => [c.name, c.phone, c.email || 'N/A']);
+        autoTable(doc, { startY: 40, head: [['Customer', 'Phone', 'Email']], body: tableBody });
+        doc.save(`${activeCatalog.name}_Clients.pdf`);
+      } finally { setIsGeneratingPdf(false); }
   };
 
   if (!activeCatalogId) {
       return (
-          <div className="space-y-6">
-              <div><h2 className="text-3xl font-bold text-gray-800">Reports Center</h2><p className="text-gray-500">Select a catalog to generate reports.</p></div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {catalogs.map(c => (
-                  <div key={c.id} onClick={() => setActiveCatalogId(c.id)} className="bg-white p-6 rounded-xl border border-gray-100 hover:shadow-md transition-all cursor-pointer group hover-glow relative overflow-hidden">
-                      <div className="flex mb-4"><div className="p-3 theme-bg-light theme-text rounded-lg"><FileText size={24} /></div></div>
-                      <h3 className="text-xl font-bold text-gray-800">{c.name}</h3>
-                      <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
-                          <span className="text-xs text-gray-500 font-bold uppercase">Status</span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-bold ${c.status === 'OPEN' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{c.status}</span>
+          <div className="space-y-8 animate-fade-in">
+              <div><h2 className="text-4xl font-black text-gray-900 tracking-tight">System Data & Reports</h2></div>
+
+              <div className="p-8 rounded-3xl border shadow-sm bg-white border-gray-100">
+                  <div className="flex items-center gap-4 mb-6"><div className="p-4 rounded-2xl theme-bg-light theme-text"><Database size={32} /></div><div><h3 className="text-2xl font-black text-gray-800">System Maintenance</h3><p className="text-gray-500">Securely back up or restore your entire business database.</p></div></div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="p-6 bg-gray-50 rounded-2xl border border-gray-200">
+                          <p className="font-bold text-gray-800 mb-2">Export Full Backup</p>
+                          <p className="text-xs text-gray-500 mb-4">Downloads all clients, orders, products, and settings.</p>
+                          <button onClick={handleDownloadBackup} className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-white border rounded-xl text-sm font-black hover:bg-gray-100 transition-all shadow-sm"><Download size={18} /> Download JSON</button>
+                      </div>
+                      <div className="p-6 bg-gray-50 rounded-2xl border border-gray-200">
+                          <p className="font-bold text-gray-800 mb-2">Restore from File</p>
+                          <p className="text-xs text-gray-500 mb-4">Overwrites all current data with a previous backup.</p>
+                          <input type="file" accept=".json" ref={fileInputRef} onChange={handleUploadBackup} className="hidden" />
+                          <button onClick={() => fileInputRef.current?.click()} disabled={isImporting} className="w-full flex items-center justify-center gap-2 px-6 py-3 theme-bg text-white rounded-xl text-sm font-black shadow-lg">
+                              {isImporting ? <Loader className="animate-spin" size={18} /> : <Upload size={18} />} Select Backup File
+                          </button>
                       </div>
                   </div>
-                ))}
+              </div>
+
+              <div className="space-y-6">
+                  <h3 className="text-2xl font-black text-gray-800">Catalog Reports</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {catalogs.map(c => (
+                      <div key={c.id} onClick={() => setActiveCatalogId(c.id)} className="bg-white p-8 rounded-3xl border border-gray-100 hover:theme-border transition-all cursor-pointer group shadow-sm">
+                          <div className="p-4 theme-bg-light theme-text rounded-2xl w-fit mb-6"><FileText size={28} /></div>
+                          <h3 className="text-2xl font-black text-gray-900">{c.name}</h3>
+                          <p className="text-xs font-bold text-gray-400 mt-4 uppercase">View PDF Options &rarr;</p>
+                      </div>
+                    ))}
+                  </div>
               </div>
           </div>
       );
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)]">
-        <div className="flex items-center gap-4 mb-6"><button onClick={() => setActiveCatalogId(null)} className="p-2 hover:bg-gray-200 rounded-full"><ArrowLeft size={20} className="text-gray-600"/></button><h2 className="text-3xl font-bold text-gray-800">Reports: {activeCatalog?.name}</h2></div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            {/* Product Summary Card */}
-            <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow relative overflow-hidden group">
-                <div className="absolute top-0 left-0 w-2 h-full theme-bg"></div>
-                <h3 className="text-xl font-bold mb-2 flex items-center text-gray-800"><Package className="mr-3 theme-text" size={24}/> Product Summary</h3>
-                <p className="text-gray-500 text-sm mb-6 leading-relaxed">
-                    Generates a consolidated list of all products ordered in this catalog. 
-                    Includes a breakdown of total quantities per variant (e.g., "Size 42 Red").
-                </p>
-                <button onClick={generateProductSummaryPDF} className="w-full flex justify-center items-center px-6 py-4 theme-bg text-white rounded-xl transition-all font-bold shadow-lg hover:brightness-110 active:scale-95">
-                    <Download size={20} className="mr-2" /> Download Product Summary PDF
-                </button>
-            </div>
-
-            {/* Client List Card */}
-            <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow relative overflow-hidden group">
-                <div className="absolute top-0 left-0 w-2 h-full" style={{ backgroundColor: 'var(--color-secondary)' }}></div>
-                <h3 className="text-xl font-bold mb-2 flex items-center text-gray-800"><Users className="mr-3" style={{ color: 'var(--color-secondary)' }} size={24}/> Client Order List</h3>
-                <p className="text-gray-500 text-sm mb-6 leading-relaxed">
-                    Generates a master list of all clients who have ordered from this catalog.
-                    Lists every specific item and variant ordered by each person.
-                </p>
-                <button onClick={generateClientListPDF} className="w-full flex justify-center items-center px-6 py-4 text-white rounded-xl transition-all font-bold shadow-lg hover:opacity-90 active:scale-95" style={{ backgroundColor: 'var(--color-secondary)' }}>
-                    <Download size={20} className="mr-2" /> Download Client List PDF
-                </button>
-            </div>
+    <div className="animate-fade-in">
+        <div className="flex items-center gap-4 mb-8">
+            <button onClick={() => setActiveCatalogId(null)} className="p-4 bg-white border rounded-2xl hover:bg-gray-50 shadow-sm transition-all"><ArrowLeft size={20} className="text-gray-600" /></button>
+            <div><h2 className="text-3xl font-black text-gray-900">{activeCatalog?.name} Documents</h2></div>
         </div>
-
-        {/* Live Preview Area */}
-        <div className="flex-1 bg-white p-6 rounded-xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-            <h3 className="font-bold text-gray-800 mb-4 pb-2 border-b border-gray-100 flex items-center"><FileText size={16} className="mr-2 text-gray-400"/> Quick Preview: Top 5 Items</h3>
-            <div className="overflow-y-auto flex-1">
-                <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-gray-500 uppercase bg-gray-50">
-                        <tr><th className="px-4 py-3">Product</th><th className="px-4 py-3">Variant Breakdown</th><th className="px-4 py-3 text-right">Total</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                        {getProductSummaryData().slice(0, 5).map((row, idx) => (
-                            <tr key={idx} className="hover:bg-gray-50">
-                                <td className="px-4 py-3 font-bold text-gray-800">{row[0]}</td>
-                                <td className="px-4 py-3 text-gray-600 whitespace-pre-wrap font-mono text-xs">{row[2].replace(/\n/g, ', ')}</td>
-                                <td className="px-4 py-3 text-right font-bold theme-text">{row[3]}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="bg-white p-10 rounded-3xl shadow-sm border border-gray-100">
+                <div className="p-5 theme-bg-light theme-text rounded-2xl w-fit mb-8"><Package size={40} /></div>
+                <h3 className="text-3xl font-black text-gray-900 mb-4">Inventory Summary</h3>
+                <p className="text-gray-500 text-sm mb-10 leading-relaxed">PDF list of all products and quantities sold in this month.</p>
+                <button disabled={isGeneratingPdf} onClick={generateProductSummary} className="w-full flex justify-center items-center px-8 py-5 theme-bg text-white rounded-2xl font-black shadow-lg">
+                    {isGeneratingPdf ? <Loader className="animate-spin mr-2"/> : <Printer className="mr-2"/>} Download Summary
+                </button>
+            </div>
+            
+            <div className="bg-white p-10 rounded-3xl shadow-sm border border-gray-100">
+                <div className="p-5 bg-slate-100 text-slate-900 rounded-2xl w-fit mb-8"><Users size={40} /></div>
+                <h3 className="text-3xl font-black text-gray-900 mb-4">Client Registry</h3>
+                <p className="text-gray-500 text-sm mb-10 leading-relaxed">PDF list of all customers who placed orders from this import month.</p>
+                <button disabled={isGeneratingPdf} onClick={generateClientList} className="w-full flex justify-center items-center px-8 py-5 bg-slate-900 text-white rounded-2xl font-black shadow-lg">
+                    {isGeneratingPdf ? <Loader className="animate-spin mr-2"/> : <Printer className="mr-2"/>} Download Registry
+                </button>
             </div>
         </div>
     </div>

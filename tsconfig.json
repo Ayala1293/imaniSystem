@@ -1,3 +1,4 @@
+
 {
   "compilerOptions": {
     "target": "ES2020",
@@ -16,5 +17,22 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["./**/*.ts", "./**/*.tsx"]
+  "include": [
+    "./index.tsx",
+    "./App.tsx",
+    "./store.tsx",
+    "./types.ts",
+    "./constants.ts",
+    "./components/**/*.ts",
+    "./components/**/*.tsx",
+    "./pages/**/*.ts",
+    "./pages/**/*.tsx",
+    "./services/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "backend",
+    "dist-electron"
+  ]
 }

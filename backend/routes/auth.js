@@ -4,6 +4,12 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const Catalog = require('../models/Catalog');
+const Product = require('../models/Product');
+const Client = require('../models/Client');
+const Order = require('../models/Order');
+const Payment = require('../models/Payment');
+const ShopSettings = require('../models/ShopSettings');
 const { protect, admin } = require('../middleware/auth');
 
 const generateToken = (id) => {
@@ -11,13 +17,10 @@ const generateToken = (id) => {
 };
 
 // @route   GET /api/auth/init
-// @desc    Check if any users exist (to trigger setup mode)
 router.get('/init', async (req, res) => {
-    // Fail fast if DB not connected yet
     if (mongoose.connection.readyState !== 1) {
         return res.status(503).json({ message: 'Database connecting...' });
     }
-
     try {
         const count = await User.countDocuments();
         res.json({ hasUsers: count > 0 });
@@ -26,8 +29,6 @@ router.get('/init', async (req, res) => {
     }
 });
 
-// @route   GET /api/auth/users
-// @desc    List all users (Admin only)
 router.get('/users', protect, admin, async (req, res) => {
     try {
         const users = await User.find({}).select('-password');
@@ -37,13 +38,10 @@ router.get('/users', protect, admin, async (req, res) => {
     }
 });
 
-// @route   DELETE /api/auth/users/:id
-// @desc    Delete a user (Admin only)
 router.delete('/users/:id', protect, admin, async (req, res) => {
     try {
         const user = await User.findById(req.params.id);
         if (user) {
-            // Prevent deleting self
             if (user._id.toString() === req.user._id.toString()) {
                 return res.status(400).json({ message: 'Cannot delete your own admin account.' });
             }
@@ -57,31 +55,17 @@ router.delete('/users/:id', protect, admin, async (req, res) => {
     }
 });
 
-// @route   POST /api/auth/login
 router.post('/login', async (req, res) => {
     const { username, password, role } = req.body;
-    
-    // Normalize input
     const normalizedUsername = username ? username.toLowerCase().trim() : '';
-    
-    // --- DEBUG LOGGING ---
-    console.log("\n--- LOGIN ATTEMPT ---");
-    console.log(`Input Username: '${username}' -> Normalized: '${normalizedUsername}'`);
-    console.log(`Input Password: '${password}'`);
-    console.log(`Target Role:    '${role}'`);
-    // ---------------------
-
     try {
         const user = await User.findOne({ username: normalizedUsername });
-
         if (user) {
             const isMatch = await user.matchPassword(password);
-            console.log(`User Found in DB. Password Match: ${isMatch ? "YES" : "NO"}`);
-            
             if (isMatch) {
+                // Check if requested role matches DB role (to prevent staff from logging as admin or vice versa)
                 if (user.role !== role) {
-                    console.log(`Role Mismatch: DB has '${user.role}', User selected '${role}'`);
-                    return res.status(401).json({ message: `Account exists but is not a ${role} account.` });
+                    return res.status(401).json({ message: `Account exists but your assigned role is '${user.role}', not '${role}'.` });
                 }
                 res.json({
                     _id: user._id,
@@ -92,31 +76,26 @@ router.post('/login', async (req, res) => {
                 });
                 return;
             }
-        } else {
-            console.log("User NOT found in database.");
         }
-        
         res.status(401).json({ message: 'Invalid username or password' });
-
     } catch (err) {
-        console.error("Login Error:", err);
         res.status(500).json({ message: err.message });
     }
 });
 
-// @route   POST /api/auth/register
-// @desc    Register user. SECURED: Only allowed if 0 users exist OR if request is from Admin.
 router.post('/register', async (req, res) => {
     const { name, username, password, role } = req.body;
-
-    // Normalize input
     const normalizedUsername = username ? username.toLowerCase().trim() : '';
-
     try {
         const count = await User.countDocuments();
+        let finalRole = role;
 
-        // SECURITY CHECK: If system is already set up (users > 0), ensure request is from Admin
-        if (count > 0) {
+        // If this is the FIRST user, ALWAYS make them an ADMIN to prevent system lockouts
+        if (count === 0) {
+            finalRole = 'ADMIN';
+            console.log("🛠️  First user registration detected. Forcing role to 'ADMIN'.");
+        } else {
+            // If not the first user, require authorization
             let token;
             if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
                 token = req.headers.authorization.split(' ')[1];
@@ -124,7 +103,6 @@ router.post('/register', async (req, res) => {
             if (!token) {
                 return res.status(401).json({ message: 'Authorization required to create new users.' });
             }
-            
             try {
                 const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
                 const adminUser = await User.findById(decoded.id);
@@ -141,15 +119,8 @@ router.post('/register', async (req, res) => {
             return res.status(400).json({ message: 'Username already registered' });
         }
 
-        const user = await User.create({ 
-            name, 
-            username: normalizedUsername, 
-            password, 
-            role 
-        });
-
+        const user = await User.create({ name, username: normalizedUsername, password, role: finalRole });
         if (user) {
-            console.log(`[AUTH] New User Registered: ${normalizedUsername} (${role})`);
             res.status(201).json({
                 _id: user._id,
                 name: user.name,
@@ -165,15 +136,24 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// @route   POST /api/auth/factory-reset
-// @desc    EMERGENCY ONLY: Deletes all users to reset to setup mode
+// Full System Wipe
 router.post('/factory-reset', async (req, res) => {
+    console.log("⚠️ RECEIVED FACTORY RESET REQUEST");
     try {
+        // Execute deletions sequentially to ensure stability on some systems
         await User.deleteMany({});
-        console.log("⚠️ SYSTEM FACTORY RESET: All users deleted.");
-        res.json({ success: true, message: 'System reset. All users deleted.' });
+        await Catalog.deleteMany({});
+        await Product.deleteMany({});
+        await Client.deleteMany({});
+        await Order.deleteMany({});
+        await Payment.deleteMany({});
+        await ShopSettings.deleteMany({});
+        
+        console.log("✅ SYSTEM WIPE SUCCESSFUL: All database collections cleared.");
+        res.json({ success: true, message: 'System reset. All data deleted.' });
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        console.error("❌ FACTORY RESET ERROR:", err.message);
+        res.status(500).json({ success: false, message: err.message });
     }
 });
 

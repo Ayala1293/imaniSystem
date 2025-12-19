@@ -10,7 +10,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // @route   POST /api/products/:id/stock
-// @desc    Update stock levels (Allowed for Staff) - Changed from PATCH to POST for better compatibility
+// @desc    Update stock levels (Allowed for Staff)
 router.post('/:id/stock', protect, async (req, res) => {
     try {
         const product = await Product.findById(req.params.id);
@@ -40,13 +40,20 @@ router.post('/', protect, admin, async (req, res) => {
 });
 
 router.put('/:id', protect, admin, async (req, res) => {
-    const product = await Product.findById(req.params.id);
-    if (product) {
-        Object.assign(product, req.body);
-        const updatedProduct = await product.save();
-        res.json(updatedProduct);
-    } else {
-        res.status(404).json({ message: 'Product not found' });
+    try {
+        const product = await Product.findById(req.params.id);
+        if (product) {
+            // Destructure to remove client-side 'id' and avoid overwriting '_id' or internal timestamps
+            const { id, _id, createdAt, updatedAt, __v, ...updateData } = req.body;
+            Object.assign(product, updateData);
+            const updatedProduct = await product.save();
+            res.json(updatedProduct);
+        } else {
+            res.status(404).json({ message: 'Product not found' });
+        }
+    } catch (err) {
+        console.error("Backend Product Update Error:", err);
+        res.status(400).json({ message: err.message });
     }
 });
 

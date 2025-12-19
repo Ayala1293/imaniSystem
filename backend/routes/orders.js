@@ -20,15 +20,20 @@ router.post('/', protect, async (req, res) => {
 });
 
 router.put('/:id', protect, async (req, res) => {
-    const order = await Order.findById(req.params.id);
-    if (order) {
-        // Simple update logic, simpler than frontend state logic as we trust the client calculated totals for now
-        // In real prod, strict validation should happen here
-        Object.assign(order, req.body);
-        const updatedOrder = await order.save();
-        res.json(updatedOrder);
-    } else {
-        res.status(404).json({ message: 'Order not found' });
+    try {
+        const order = await Order.findById(req.params.id);
+        if (order) {
+            // Stripping metadata and client-side IDs
+            const { id, _id, createdAt, updatedAt, __v, ...updateData } = req.body;
+            Object.assign(order, updateData);
+            const updatedOrder = await order.save();
+            res.json(updatedOrder);
+        } else {
+            res.status(404).json({ message: 'Order not found' });
+        }
+    } catch (err) {
+        console.error("Backend Order Update Error:", err);
+        res.status(400).json({ message: err.message });
     }
 });
 
